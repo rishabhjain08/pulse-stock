@@ -3,6 +3,20 @@ name: Build & Deploy to Firebase App Distribution
 on:
   push:
     branches: [ main ]
+    paths:
+      # Only trigger when build-relevant files change.
+      # Pushes that only touch README, docs, or secrets config are skipped entirely.
+      - 'app/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/build_deploy.yml'
+
+# If a new push arrives while a build is in progress for the same branch,
+# cancel the old run immediately — no point finishing a stale APK.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-deploy:
@@ -12,34 +26,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # cache: gradle caches ~/.gradle/caches and ~/.gradle/wrapper between runs.
+      # This replaces the old manual actions/cache@v4 step.
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
-          restore-keys: gradle-
-
-      - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version 9.4.1 --distribution-type bin
-
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+          cache: gradle
 
       - name: Write google-services.json
         run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
+      # Use the system Gradle binary (9.4.1 on ubuntu-latest) directly.
+      # This eliminates the 75-second "gradle wrapper" generation step.
+      # --build-cache: reuses task outputs from the Gradle remote/local cache.
+      # --parallel:    runs independent tasks concurrently.
+      # --no-daemon:   avoids daemon startup overhead in a one-shot CI environment.
       - name: Build debug APK
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --build-cache --parallel --no-daemon
 
       - name: Deploy to Firebase App Distribution
         uses: wzieba/Firebase-Distribution-Github-Action@v1
@@ -48,4 +55,4 @@ jobs:
           serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           groups: internal-testers
           file: app/build/outputs/apk/debug/app-debug.apk
-          releaseNotes: "Build from commit ${{ github.sha }} — ${{ github.event.head_commit.message }}"
+          releaseNotes: "Build ${{ github.run_number }} — ${{ github.event.head_commit.message }}"
