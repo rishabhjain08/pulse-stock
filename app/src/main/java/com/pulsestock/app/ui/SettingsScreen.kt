@@ -67,12 +67,8 @@ fun SettingsScreen() {
 
     fun tryAdd() {
         val symbol = input.trim().uppercase()
-        error = when {
-            symbol.isBlank()       -> "Enter a ticker symbol"
-            symbol.length > 5      -> "Max 5 characters"
-            symbol in symbols      -> "$symbol is already in your list"
-            else                   -> null
-        }
+        error = StockPreferences.validate(symbol)
+            ?: if (symbol in symbols) "$symbol is already in your list" else null
         if (error == null) {
             scope.launch { prefs.updateSymbols(symbols + symbol) }
             input = ""
@@ -117,7 +113,7 @@ fun SettingsScreen() {
                     style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = PulseSubtext)
                 )
                 Text(
-                    "${symbols.size} / ${StockPreferences.MAX_SYMBOLS}",
+                    "${symbols.size} symbol${if (symbols.size == 1) "" else "s"}",
                     style = TextStyle(fontSize = 13.sp, color = PulseSubtext)
                 )
             }
@@ -176,46 +172,46 @@ fun SettingsScreen() {
             Spacer(Modifier.height(16.dp))
 
             // Add symbol row
-            if (symbols.size < StockPreferences.MAX_SYMBOLS) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier          = Modifier.fillMaxWidth()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier          = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value          = input,
+                    onValueChange  = { input = it.uppercase().take(32) },
+                    label          = { Text("Add symbol") },
+                    placeholder    = { Text("e.g. AAPL or BINANCE:BTCUSDT", color = PulseSubtext) },
+                    singleLine     = true,
+                    modifier       = Modifier.weight(1f),
+                    isError        = error != null,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        imeAction      = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { tryAdd() })
+                )
+                Spacer(Modifier.width(8.dp))
+                FilledIconButton(
+                    onClick = ::tryAdd,
+                    colors  = IconButtonDefaults.filledIconButtonColors(containerColor = PulseGreen)
                 ) {
-                    OutlinedTextField(
-                        value          = input,
-                        onValueChange  = { input = it.uppercase().take(6) },
-                        label          = { Text("Add symbol  (e.g. AAPL)") },
-                        singleLine     = true,
-                        modifier       = Modifier.weight(1f),
-                        isError        = error != null,
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Characters,
-                            imeAction      = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { tryAdd() })
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    FilledIconButton(
-                        onClick = ::tryAdd,
-                        colors  = IconButtonDefaults.filledIconButtonColors(containerColor = PulseGreen)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White)
-                    }
+                    Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White)
                 }
+            }
 
-                error?.let { msg ->
-                    Text(
-                        text     = msg,
-                        color    = PulseRed,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-                    )
-                }
+            if (error != null) {
+                Text(
+                    text     = error!!,
+                    color    = PulseRed,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
             } else {
                 Text(
-                    "Maximum ${StockPreferences.MAX_SYMBOLS} symbols reached. Remove one to add another.",
-                    fontSize = 12.sp,
-                    color    = PulseSubtext
+                    text     = "US stocks: AAPL · Crypto: BINANCE:BTCUSDT · Forex: OANDA:EUR_USD",
+                    fontSize = 11.sp,
+                    color    = PulseSubtext,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                 )
             }
 
