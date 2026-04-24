@@ -1,15 +1,18 @@
 name: Build & Distribute via Firebase App Distribution
 
 # ── How to enable this workflow ────────────────────────────────────────────
-# Add these secrets in Settings → Secrets and variables → Actions:
+# 1. Add a repository VARIABLE (not secret) to act as the on/off switch:
+#      Settings → Secrets and variables → Actions → Variables tab
+#      Name: ENABLE_FIREBASE_DISTRIBUTION   Value: true
 #
-#   FINNHUB_API_KEY              Your Finnhub.io API key
-#   GOOGLE_SERVICES_JSON         Contents of google-services.json from Firebase console
-#   FIREBASE_APP_ID              Firebase app ID  (format: 1:xxx:android:xxx)
-#   FIREBASE_SERVICE_ACCOUNT_JSON  Firebase service account key JSON
+# 2. Add these repository SECRETS:
+#      FINNHUB_API_KEY              Your Finnhub.io API key
+#      GOOGLE_SERVICES_JSON         Contents of google-services.json from Firebase console
+#      FIREBASE_APP_ID              Firebase app ID  (format: 1:xxx:android:xxx)
+#      FIREBASE_SERVICE_ACCOUNT_JSON  Firebase service account key JSON
 #
-# In Firebase Console → App Distribution → Testers & Groups:
-#   Create a group named exactly "internal-testers" and add tester emails.
+# 3. In Firebase Console → App Distribution → Testers & Groups:
+#      Create a group named exactly "internal-testers" and add tester emails.
 # ──────────────────────────────────────────────────────────────────────────
 
 on:
@@ -30,8 +33,9 @@ concurrency:
 jobs:
   build-and-distribute:
     runs-on: ubuntu-latest
-    # Skip entirely if Firebase secrets are not configured
-    if: ${{ secrets.FIREBASE_APP_ID != '' }}
+    # Skips unless ENABLE_FIREBASE_DISTRIBUTION variable is set to 'true'
+    # Set it in: Settings → Secrets and variables → Actions → Variables tab
+    if: vars.ENABLE_FIREBASE_DISTRIBUTION == 'true'
 
     steps:
       - name: Checkout

@@ -1,17 +1,21 @@
 name: Build & Deploy to Play Store Internal Track
 
 # ── How to enable this workflow ────────────────────────────────────────────
-# Add these secrets in Settings → Secrets and variables → Actions:
+# 1. Add a repository VARIABLE (not secret) to act as the on/off switch:
+#      Settings → Secrets and variables → Actions → Variables tab
+#      Name: ENABLE_PLAY_STORE_DEPLOY   Value: true
 #
-#   FINNHUB_API_KEY              Your Finnhub.io API key
-#   GOOGLE_SERVICES_JSON         Contents of google-services.json from Firebase console
-#   KEYSTORE_BASE64              base64-encoded release keystore (see README for keytool cmd)
-#   KEYSTORE_PASSWORD            Keystore password
-#   KEY_ALIAS                    Key alias (default: pulsestock)
-#   KEY_PASSWORD                 Key password
-#   PLAY_SERVICE_ACCOUNT_JSON    Google Play service account key JSON
-#                                (Play Console → Setup → API access → Create service account
-#                                 → grant "Release manager" role in Play Console)
+# 2. Add these repository SECRETS:
+#      FINNHUB_API_KEY              Your Finnhub.io API key
+#      GOOGLE_SERVICES_JSON         Contents of google-services.json from Firebase console
+#      KEYSTORE_BASE64              base64-encoded release keystore (see README for keytool cmd)
+#      KEYSTORE_PASSWORD            Keystore password
+#      KEY_ALIAS                    Key alias (default: pulsestock)
+#      KEY_PASSWORD                 Key password
+#      PLAY_SERVICE_ACCOUNT_JSON    Google Play service account key JSON
+#                                   (Play Console → Setup → API access → Create service account
+#                                    → grant 'Release apps to testing tracks' +
+#                                      'View app information (read-only)' permissions)
 # ──────────────────────────────────────────────────────────────────────────
 
 on:
@@ -31,8 +35,9 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    # Skip entirely if Play Store secrets are not configured
-    if: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+    # Skips unless ENABLE_PLAY_STORE_DEPLOY variable is set to 'true'
+    # Set it in: Settings → Secrets and variables → Actions → Variables tab
+    if: vars.ENABLE_PLAY_STORE_DEPLOY == 'true'
     runs-on: ubuntu-latest
 
     steps:
