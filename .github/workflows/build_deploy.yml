@@ -27,6 +27,9 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
           restore-keys: gradle-
 
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1 --distribution-type bin
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
