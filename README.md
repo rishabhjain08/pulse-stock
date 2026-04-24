@@ -137,9 +137,22 @@ Builds that only change documentation or non-build files are skipped automatical
 
 ---
 
+Each pipeline is gated by a **repository variable** (not a secret). Set the variable to `true` to enable a pipeline, leave it unset or `false` to disable it. This lets you enable one or both without changing any code.
+
+**Settings → Secrets and variables → Actions → Variables tab:**
+
+| Variable | Set to | Effect |
+|---|---|---|
+| `ENABLE_FIREBASE_DISTRIBUTION` | `true` | Enables Firebase App Distribution pipeline |
+| `ENABLE_PLAY_STORE_DEPLOY` | `true` | Enables Play Store internal track pipeline |
+
+---
+
 ### Option A — Firebase App Distribution (`firebase_distribute.yml`)
 
 Builds a **debug APK** and delivers it directly to testers via Firebase App Distribution. No Play Store account or signing keystore needed. Best for rapid internal testing.
+
+**Enable:** Set repository variable `ENABLE_FIREBASE_DISTRIBUTION = true`
 
 **Required secrets:**
 
@@ -158,6 +171,8 @@ Builds a **debug APK** and delivers it directly to testers via Firebase App Dist
 ### Option B — Google Play Internal Track (`build_deploy.yml`)
 
 Builds a **signed release AAB** and publishes it to the Play Store internal testing track. Testers install via the Play Store — no sideloading required. Best for devices with MDM restrictions.
+
+**Enable:** Set repository variable `ENABLE_PLAY_STORE_DEPLOY = true`
 
 **One-time keystore generation (run locally, keep the file safe):**
 ```bash
