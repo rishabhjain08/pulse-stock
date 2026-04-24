@@ -28,7 +28,7 @@ jobs:
           restore-keys: gradle-
 
       - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version 8.11.1 --distribution-type bin
+        run: gradle wrapper --gradle-version 9.4.1 --distribution-type bin
 
       - name: Make gradlew executable
         run: chmod +x gradlew
