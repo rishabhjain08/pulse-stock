@@ -131,23 +131,60 @@ app/src/main/
 
 ## CI / CD
 
-Every push to `main` that changes app source or build files:
+Two independent deployment pipelines are available. Set up whichever suits your workflow — or both.
 
-1. Builds a debug APK (JDK 17, Gradle 9.4.1)
-2. Distributes it to the `internal-testers` group via Firebase App Distribution
+Builds that only change documentation or non-build files are skipped automatically on both pipelines.
 
-Builds that only change documentation or non-build files are skipped automatically.
+---
 
-### Required GitHub Secrets
+### Option A — Firebase App Distribution (`firebase_distribute.yml`)
 
-Go to **Settings → Secrets and variables → Actions** and add:
+Builds a **debug APK** and delivers it directly to testers via Firebase App Distribution. No Play Store account or signing keystore needed. Best for rapid internal testing.
 
-| Secret | Description |
+**Required secrets:**
+
+| Secret | Where to get it |
 |---|---|
-| `FINNHUB_API_KEY` | Your Finnhub.io API key |
-| `FIREBASE_APP_ID` | Firebase app ID (format: `1:xxx:android:xxx`) |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Full JSON content of your Firebase service account key |
-| `GOOGLE_SERVICES_JSON` | Full JSON content of your `google-services.json` |
+| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard |
+| `GOOGLE_SERVICES_JSON` | Firebase console → Project settings → `google-services.json` |
+| `FIREBASE_APP_ID` | Firebase console → Project settings → Your apps → App ID (`1:xxx:android:xxx`) |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase console → Project settings → Service accounts → Generate key (grant **Firebase App Distribution Admin** role in Google Cloud IAM) |
+
+**Firebase setup:**
+- Create a tester group named exactly `internal-testers` in **App Distribution → Testers & Groups**
+
+---
+
+### Option B — Google Play Internal Track (`build_deploy.yml`)
+
+Builds a **signed release AAB** and publishes it to the Play Store internal testing track. Testers install via the Play Store — no sideloading required. Best for devices with MDM restrictions.
+
+**One-time keystore generation (run locally, keep the file safe):**
+```bash
+keytool -genkey -v \
+  -keystore pulsestock.keystore \
+  -alias pulsestock \
+  -keyalg RSA -keysize 2048 -validity 10000
+
+# Encode for GitHub Secrets (macOS)
+base64 -i pulsestock.keystore | pbcopy
+```
+
+**Required secrets:**
+
+| Secret | Where to get it |
+|---|---|
+| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard |
+| `GOOGLE_SERVICES_JSON` | Firebase console → `google-services.json` |
+| `KEYSTORE_BASE64` | Base64-encoded keystore file (command above) |
+| `KEYSTORE_PASSWORD` | Password chosen during `keytool` |
+| `KEY_ALIAS` | `pulsestock` (or whatever alias you chose) |
+| `KEY_PASSWORD` | Key password (can match keystore password) |
+| `PLAY_SERVICE_ACCOUNT_JSON` | Play Console → Setup → API access → Create service account → grant **Release manager** role |
+
+**Play Console setup:**
+1. Create the app and complete store listing, content rating, data safety, and target audience
+2. Go to **Testing → Internal testing** and add tester emails
 
 ---
 
