@@ -1,21 +1,16 @@
-name: Build & Deploy to Firebase App Distribution
+name: Build & Deploy to Play Store Internal Track
 
 on:
   push:
     branches: [ main ]
     paths:
-      # Only trigger when build-relevant files change.
-      # Pushes that only touch README, docs, or secrets config are skipped entirely.
       - 'app/**'
       - 'gradle/**'
       - '*.gradle.kts'
       - 'gradle.properties'
       - '.github/workflows/build_deploy.yml'
-  # Allow manual runs from the GitHub Actions tab (Actions → Build & Deploy → Run workflow)
   workflow_dispatch:
 
-# If a new push arrives while a build is in progress for the same branch,
-# cancel the old run immediately — no point finishing a stale APK.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -28,8 +23,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # cache: gradle caches ~/.gradle/caches and ~/.gradle/wrapper between runs.
-      # This replaces the old manual actions/cache@v4 step.
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -40,22 +33,48 @@ jobs:
       - name: Write google-services.json
         run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
-      # Use the system Gradle binary (9.4.1 on ubuntu-latest) directly.
-      # This eliminates the 75-second "gradle wrapper" generation step.
-      # --build-cache: reuses task outputs from the Gradle remote/local cache.
-      # --parallel:    runs independent tasks concurrently.
-      # --no-daemon:   avoids daemon startup overhead in a one-shot CI environment.
-      - name: Build debug APK
+      # Decode the base64-encoded keystore stored in GitHub Secrets
+      - name: Decode keystore
+        run: |
+          mkdir -p keystore
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore/pulsestock.keystore
+
+      # Build a signed release AAB (Android App Bundle).
+      # Play Store requires AAB over APK; bundleRelease produces app/build/outputs/bundle/release/app-release.aab
+      - name: Build signed release AAB
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: gradle assembleDebug --build-cache --parallel --no-daemon
+          KEYSTORE_PATH: ../keystore/pulsestock.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle bundleRelease --build-cache --parallel --no-daemon
 
-      - name: Deploy to Firebase App Distribution
-        uses: wzieba/Firebase-Distribution-Github-Action@v1
+      # Auto-increment versionCode using the GitHub run number so every upload
+      # has a unique code (Play rejects duplicate versionCodes).
+      - name: Set versionCode to run number
+        run: |
+          sed -i "s/versionCode = [0-9]*/versionCode = ${{ github.run_number }}/" app/build.gradle.kts
+          echo "versionCode set to ${{ github.run_number }}"
+
+      - name: Rebuild AAB with updated versionCode
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          KEYSTORE_PATH: ../keystore/pulsestock.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle bundleRelease --build-cache --parallel --no-daemon
+
+      # Upload to Play Store internal testing track.
+      # Requires PLAY_SERVICE_ACCOUNT_JSON secret (Play Console → Setup → API access).
+      - name: Publish to Play Store internal track
+        uses: r0adkll/upload-google-play@v1
         with:
-          appId: ${{ secrets.FIREBASE_APP_ID }}
-          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          groups: internal-testers
-          file: app/build/outputs/apk/debug/app-debug.apk
-          releaseNotes: "Build ${{ github.run_number }} — ${{ github.event.head_commit.message }}"
-          debug: true
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.pulsestock.app
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
+          releaseName: "Build ${{ github.run_number }}"
+          whatsNewDirectory: distribution/whatsnew

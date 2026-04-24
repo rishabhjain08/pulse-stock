@@ -14,3 +14,6 @@ local.properties
 # Firebase — never commit these to a public repo
 google-services.json
 secrets/
+
+# Signing keystore — never commit to public repo
+keystore/

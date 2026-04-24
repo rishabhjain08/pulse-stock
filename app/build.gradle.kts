@@ -31,13 +31,26 @@ android {
         buildConfigField("String", "FINNHUB_API_KEY", "\"$finnhubApiKey\"")
     }
 
+    signingConfigs {
+        create("release") {
+            // In CI: decoded from KEYSTORE_BASE64 secret into keystore/pulsestock.keystore
+            // Locally: place the keystore at that path and set env vars
+            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "../keystore/pulsestock.keystore")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("KEY_ALIAS") ?: "pulsestock"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isDebuggable = true
