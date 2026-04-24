@@ -10,3 +10,7 @@
 *.keystore
 !debug.keystore
 local.properties
+
+# Firebase — never commit these to a public repo
+google-services.json
+secrets/
