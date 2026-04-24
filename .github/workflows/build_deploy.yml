@@ -76,9 +76,6 @@ jobs:
       # Upload to Play Store internal testing track.
       # Requires PLAY_SERVICE_ACCOUNT_JSON secret (Play Console → Setup → API access).
       #
-      # status: draft — app is still in "draft app" state (no release ever published).
-      # Once you manually rollout the first release from Play Console, change this
-      # to 'completed' so future CI pushes publish automatically.
       - name: Publish to Play Store internal track
         uses: r0adkll/upload-google-play@v1
         with:
@@ -86,6 +83,6 @@ jobs:
           packageName: com.pulsestock.app
           releaseFiles: app/build/outputs/bundle/release/app-release.aab
           tracks: internal
-          status: draft
+          status: completed
           releaseName: "Build ${{ github.run_number }}"
           whatsNewDirectory: distribution/whatsnew
