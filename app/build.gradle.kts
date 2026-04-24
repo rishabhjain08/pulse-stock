@@ -25,7 +25,9 @@ android {
         applicationId = "com.pulsestock.app"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
+        // CI passes VERSION_CODE via env var (set to github.run_number).
+        // Falls back to 1 for local builds.
+        versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 1
         versionName = "1.0"
 
         buildConfigField("String", "FINNHUB_API_KEY", "\"$finnhubApiKey\"")

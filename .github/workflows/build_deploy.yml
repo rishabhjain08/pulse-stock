@@ -61,7 +61,8 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore/pulsestock.keystore
 
       # Build a signed release AAB (Android App Bundle).
-      # Play Store requires AAB over APK; bundleRelease produces app/build/outputs/bundle/release/app-release.aab
+      # VERSION_CODE is read by app/build.gradle.kts; using github.run_number
+      # guarantees a unique, ever-increasing value without a second build.
       - name: Build signed release AAB
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -69,22 +70,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle bundleRelease --build-cache --parallel --no-daemon
-
-      # Auto-increment versionCode using the GitHub run number so every upload
-      # has a unique code (Play rejects duplicate versionCodes).
-      - name: Set versionCode to run number
-        run: |
-          sed -i "s/versionCode = [0-9]*/versionCode = ${{ github.run_number }}/" app/build.gradle.kts
-          echo "versionCode set to ${{ github.run_number }}"
-
-      - name: Rebuild AAB with updated versionCode
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          KEYSTORE_PATH: ../keystore/pulsestock.keystore
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
         run: gradle bundleRelease --build-cache --parallel --no-daemon
 
       # Upload to Play Store internal testing track.
