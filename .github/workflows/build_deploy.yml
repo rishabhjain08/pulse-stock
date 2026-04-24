@@ -11,6 +11,8 @@ on:
       - '*.gradle.kts'
       - 'gradle.properties'
       - '.github/workflows/build_deploy.yml'
+  # Allow manual runs from the GitHub Actions tab (Actions → Build & Deploy → Run workflow)
+  workflow_dispatch:
 
 # If a new push arrives while a build is in progress for the same branch,
 # cancel the old run immediately — no point finishing a stale APK.
