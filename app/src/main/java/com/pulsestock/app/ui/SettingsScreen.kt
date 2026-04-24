@@ -53,6 +53,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.PulseHUDService
 import com.pulsestock.app.data.StockPreferences
 import com.pulsestock.app.ui.theme.PulseGreen
@@ -284,6 +285,16 @@ fun SettingsScreen() {
             }
 
             Spacer(Modifier.height(24.dp))
+
+            Text(
+                text     = "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                fontSize = 11.sp,
+                color    = PulseSubtext,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 }
