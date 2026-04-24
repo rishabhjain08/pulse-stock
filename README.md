@@ -180,11 +180,18 @@ base64 -i pulsestock.keystore | pbcopy
 | `KEYSTORE_PASSWORD` | Password chosen during `keytool` |
 | `KEY_ALIAS` | `pulsestock` (or whatever alias you chose) |
 | `KEY_PASSWORD` | Key password (can match keystore password) |
-| `PLAY_SERVICE_ACCOUNT_JSON` | Play Console → Setup → API access → Create service account → grant **Release manager** role |
+| `PLAY_SERVICE_ACCOUNT_JSON` | Play Console → Setup → API access → Create service account → download JSON key |
+
+**Play Console service account permissions (grant exactly these two, nothing else):**
+- ✅ **Release apps to testing tracks** — lets CI upload the AAB and create releases
+- ✅ **View app information and download bulk reports (read-only)** — required base permission for the API
+
+Do not grant Admin, "Release to production", or any financial/store presence permissions to the CI service account.
 
 **Play Console setup:**
 1. Create the app and complete store listing, content rating, data safety, and target audience
 2. Go to **Testing → Internal testing** and add tester emails
+3. The service account gets access automatically once linked via API access
 
 ---
 
