@@ -30,6 +30,8 @@ concurrency:
 jobs:
   build-and-distribute:
     runs-on: ubuntu-latest
+    # Skip entirely if Firebase secrets are not configured
+    if: ${{ secrets.FIREBASE_APP_ID != '' }}
 
     steps:
       - name: Checkout
