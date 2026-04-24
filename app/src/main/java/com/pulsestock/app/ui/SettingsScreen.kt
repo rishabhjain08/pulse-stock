@@ -1,6 +1,7 @@
 package com.pulsestock.app.ui
 
 import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -69,7 +70,8 @@ fun SettingsScreen() {
     val prefs        = remember { StockPreferences(context) }
     val scope        = rememberCoroutineScope()
     val keyboard     = LocalSoftwareKeyboardController.current
-    val isHUDRunning by PulseHUDService.runningState.collectAsState()
+    val isHUDRunning  by PulseHUDService.runningState.collectAsState()
+    val hasOverlay    = Settings.canDrawOverlays(context)
 
     val symbols by prefs.watchedSymbols.collectAsState(initial = StockPreferences.DEFAULT_SYMBOLS)
     var input    by remember { mutableStateOf("") }
@@ -122,12 +124,14 @@ fun SettingsScreen() {
                     if (isHUDRunning) context.startService(intent)
                     else              context.startForegroundService(intent)
                 },
+                enabled  = hasOverlay || isHUDRunning,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape  = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isHUDRunning) PulseRed else PulseGreen
+                    containerColor      = if (isHUDRunning) PulseRed else PulseGreen,
+                    disabledContainerColor = PulseGreen.copy(alpha = 0.4f)
                 )
             ) {
                 Icon(
@@ -142,6 +146,15 @@ fun SettingsScreen() {
                     fontSize   = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color      = Color.White
+                )
+            }
+
+            if (!hasOverlay) {
+                Text(
+                    text     = "Grant \"Appear on top\" permission above to enable the HUD",
+                    fontSize = 11.sp,
+                    color    = PulseRed,
+                    modifier = Modifier.padding(top = 6.dp, start = 4.dp)
                 )
             }
 

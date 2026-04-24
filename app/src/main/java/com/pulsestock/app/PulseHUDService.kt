@@ -18,6 +18,7 @@ import android.os.VibratorManager
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.provider.Settings
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import androidx.annotation.RequiresApi
@@ -97,6 +98,12 @@ class PulseHUDService : Service() {
     // ── HUD lifecycle ────────────────────────────────────────────────────────
     private fun startHUD() {
         if (runningState.value) return
+        // Overlay permission is required before we can add any window.
+        // Guard here covers every start path (tile, app button, etc.).
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
         runningState.value = true
 
         val notification = buildNotification("Connecting…")
@@ -226,10 +233,14 @@ class PulseHUDService : Service() {
             }
         }
 
+        // Compose 1.8+ resolves ViewTreeLifecycleOwner by traversing UP from the
+        // WindowManager root view, so owners must be set on the wrapper, not just
+        // on the inner ComposeView.
+        wrapper.setViewTreeLifecycleOwner(lifecycleOwner)
+        wrapper.setViewTreeViewModelStoreOwner(lifecycleOwner)
+        wrapper.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+
         val composeView = ComposeView(this).apply {
-            setViewTreeLifecycleOwner(lifecycleOwner)
-            setViewTreeViewModelStoreOwner(lifecycleOwner)
-            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setContent {
                 val hint by showIconHint.collectAsState()
                 PulseStockTheme { FloatingIconContent(showHint = hint) }
@@ -269,9 +280,6 @@ class PulseHUDService : Service() {
         }
 
         val composeView = ComposeView(this).apply {
-            setViewTreeLifecycleOwner(lifecycleOwner)
-            setViewTreeViewModelStoreOwner(lifecycleOwner)
-            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setContent {
                 val snap  by streamManager.snapshot.collectAsState(
                     initial = StockStreamManager.PriceSnapshot(emptyMap(), emptyMap())
@@ -301,6 +309,10 @@ class PulseHUDService : Service() {
                 return super.onTouchEvent(event)
             }
         }
+        // Same as floating icon: set owners on the WindowManager root.
+        touchWrapper.setViewTreeLifecycleOwner(lifecycleOwner)
+        touchWrapper.setViewTreeViewModelStoreOwner(lifecycleOwner)
+        touchWrapper.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
         touchWrapper.addView(composeView)
         windowManager.addView(touchWrapper, params)
         popupView = touchWrapper
