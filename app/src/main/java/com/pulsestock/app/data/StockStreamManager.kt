@@ -59,7 +59,7 @@ class StockStreamManager {
 
     private val client = HttpClient(OkHttp) {
         install(WebSockets) {
-            pingInterval = 20_000   // keepalive ping every 20 s
+            pingIntervalMillis = 20_000   // keepalive ping every 20 s (Ktor 3.x API)
         }
     }
 
@@ -115,8 +115,9 @@ class StockStreamManager {
                     Log.d(TAG, "Connected — subscribing to $symbols")
 
                     // Subscribe to each symbol
+                    // Ktor 3.x: send(String) extension removed; use Frame.Text explicitly
                     symbols.forEach { symbol ->
-                        send("""{"type":"subscribe","symbol":"$symbol"}""")
+                        send(Frame.Text("""{"type":"subscribe","symbol":"$symbol"}"""))
                     }
 
                     for (frame in incoming) {
