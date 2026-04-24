@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PulseStock</string>
+    <string name="tile_label">PulseStock</string>
+    <string name="notification_channel_name">PulseStock Live</string>
+    <string name="notification_channel_desc">Live stock price updates in status bar</string>
+</resources>

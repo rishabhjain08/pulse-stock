@@ -1,0 +1,8 @@
+# Copy this file to local.properties (which is gitignored) and fill in your key.
+# local.properties is NEVER committed — the repo is public.
+#
+# Get a free key at https://finnhub.io/
+FINNHUB_API_KEY=your_finnhub_api_key_here
+
+# Android SDK path (Android Studio fills this automatically)
+# sdk.dir=/Users/you/Library/Android/sdk
