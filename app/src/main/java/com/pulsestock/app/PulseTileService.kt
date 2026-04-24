@@ -1,5 +1,6 @@
 package com.pulsestock.app
 
+import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -27,11 +28,21 @@ class PulseTileService : TileService() {
         super.onClick()
 
         if (!Settings.canDrawOverlays(this)) {
-            // Permission not granted — send user to settings
+            // Permission not granted — send user to settings.
+            // Android 14+ (API 34): startActivityAndCollapse(Intent) throws
+            // UnsupportedOperationException; must use PendingIntent overload.
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            startActivityAndCollapse(intent)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startActivityAndCollapse(pendingIntent)
+            } else {
+                startActivityAndCollapse(intent)
+            }
             return
         }
 
