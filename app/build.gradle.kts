@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.google.services)
+    alias(libs.plugins.firebase.crashlytics)
 }
 
 // Load API key: local.properties for dev, env var for CI
@@ -60,6 +62,19 @@ android {
         }
     }
 
+    // ── Distribution flavors ─────────────────────────────────────────────────
+    // "internal" — Firebase Crashlytics enabled (crash logs sent to Firebase console)
+    // "production" — zero Firebase code; no data collected
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("internal") {
+            dimension = "distribution"
+        }
+        create("production") {
+            dimension = "distribution"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -96,4 +111,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.androidx.ui.tooling)
+
+    // Firebase Crashlytics — internal flavor only; production builds have zero Firebase code
+    "internalImplementation"(platform(libs.firebase.bom))
+    "internalImplementation"(libs.firebase.crashlytics)
 }

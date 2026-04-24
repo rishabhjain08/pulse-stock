@@ -79,7 +79,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
-        run: gradle bundleRelease --build-cache --parallel --no-daemon
+        run: gradle bundleInternalRelease --build-cache --parallel --no-daemon
 
       # Upload to Play Store internal testing track.
       # Requires PLAY_SERVICE_ACCOUNT_JSON secret (Play Console → Setup → API access).
@@ -89,7 +89,7 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.pulsestock.app
-          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          releaseFiles: app/build/outputs/bundle/internalRelease/app-internal-release.aab
           tracks: internal
           status: draft
           releaseName: "Build ${{ github.run_number }}"
