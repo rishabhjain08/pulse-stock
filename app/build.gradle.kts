@@ -53,6 +53,7 @@ android {
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("release")
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
         }
         debug {
             isDebuggable = true
