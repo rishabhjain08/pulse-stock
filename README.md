@@ -208,6 +208,8 @@ Do not grant Admin, "Release to production", or any financial/store presence per
 2. Go to **Testing → Internal testing** and add tester emails
 3. The service account gets access automatically once linked via API access
 
+> **First release only:** CI uploads the AAB as `status: draft` because Play Console requires this for a brand-new app. Go to Play Console → Internal testing → promote the draft release → Start rollout. After this one-time step, change `status: draft` to `status: completed` in `build_deploy.yml` so future builds go live to testers automatically.
+
 ---
 
 ## Data & Privacy

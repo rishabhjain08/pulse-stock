@@ -89,13 +89,18 @@ jobs:
 
       # Upload to Play Store internal testing track.
       # Requires PLAY_SERVICE_ACCOUNT_JSON secret (Play Console → Setup → API access).
+      #
+      # status: draft — required for a brand-new app that has never had a release.
+      # After you manually promote the first release in Play Console
+      # (Internal testing → promote release → rollout), change this to 'completed'
+      # so future CI builds go live to testers automatically.
       - name: Publish to Play Store internal track
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.pulsestock.app
           releaseFiles: app/build/outputs/bundle/release/app-release.aab
-          track: internal
-          status: completed
+          tracks: internal
+          status: draft
           releaseName: "Build ${{ github.run_number }}"
           whatsNewDirectory: distribution/whatsnew
