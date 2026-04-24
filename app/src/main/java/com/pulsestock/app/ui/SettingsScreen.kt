@@ -1,5 +1,6 @@
 package com.pulsestock.app.ui
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,14 +9,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +53,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pulsestock.app.PulseHUDService
 import com.pulsestock.app.data.StockPreferences
 import com.pulsestock.app.ui.theme.PulseGreen
 import com.pulsestock.app.ui.theme.PulseRed
@@ -56,10 +64,11 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen() {
-    val context   = LocalContext.current
-    val prefs     = remember { StockPreferences(context) }
-    val scope     = rememberCoroutineScope()
-    val keyboard  = LocalSoftwareKeyboardController.current
+    val context      = LocalContext.current
+    val prefs        = remember { StockPreferences(context) }
+    val scope        = rememberCoroutineScope()
+    val keyboard     = LocalSoftwareKeyboardController.current
+    val isHUDRunning by PulseHUDService.runningState.collectAsState()
 
     val symbols by prefs.watchedSymbols.collectAsState(initial = StockPreferences.DEFAULT_SYMBOLS)
     var input    by remember { mutableStateOf("") }
@@ -83,7 +92,7 @@ fun SettingsScreen() {
                     Column {
                         Text("PulseStock", fontWeight = FontWeight.Bold, color = PulseText)
                         Text(
-                            "Pull down notification shade → tap tile to start HUD",
+                            "Manage your watched symbols",
                             fontSize = 11.sp,
                             color    = PulseSubtext
                         )
@@ -102,11 +111,70 @@ fun SettingsScreen() {
         ) {
             Spacer(Modifier.height(12.dp))
 
-            // Section header
+            // ── Start / Stop HUD button ──────────────────────────────────────
+            Button(
+                onClick = {
+                    val intent = Intent(context, PulseHUDService::class.java).apply {
+                        action = if (isHUDRunning) PulseHUDService.ACTION_STOP
+                                 else              PulseHUDService.ACTION_START
+                    }
+                    if (isHUDRunning) context.startService(intent)
+                    else              context.startForegroundService(intent)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape  = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isHUDRunning) PulseRed else PulseGreen
+                )
+            ) {
+                Icon(
+                    imageVector        = if (isHUDRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint               = Color.White,
+                    modifier           = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text       = if (isHUDRunning) "Stop HUD" else "Start HUD",
+                    fontSize   = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color      = Color.White
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── How it works ─────────────────────────────────────────────────
+            Card(
+                modifier  = Modifier.fillMaxWidth(),
+                shape     = RoundedCornerShape(12.dp),
+                colors    = CardDefaults.cardColors(containerColor = Color(0xFFF0F9F0)),
+                elevation = CardDefaults.cardElevation(0.dp)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text(
+                        "How it works",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize   = 13.sp,
+                        color      = PulseText
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    HowToStep("1", "Tap Start HUD — a floating icon appears on screen")
+                    HowToStep("2", "Tap the icon to show or hide live stock prices")
+                    HowToStep("3", "Drag the icon to reposition it anywhere")
+                    HowToStep("4", "Hold the icon (or tap Stop HUD) to close everything")
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── Watched symbols section header ───────────────────────────────
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 Text(
                     "Watched Symbols",
@@ -120,18 +188,18 @@ fun SettingsScreen() {
 
             Spacer(Modifier.height(8.dp))
 
-            // Symbol list
+            // ── Symbol list ──────────────────────────────────────────────────
             LazyColumn(modifier = Modifier.weight(1f)) {
                 itemsIndexed(symbols, key = { _, s -> s }) { index, symbol ->
                     Card(
-                        modifier = Modifier
+                        modifier  = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
                         colors    = CardDefaults.cardColors(containerColor = Color(0xFFF8F8F8)),
                         elevation = CardDefaults.cardElevation(0.dp)
                     ) {
                         Row(
-                            modifier = Modifier
+                            modifier          = Modifier
                                 .fillMaxWidth()
                                 .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -148,9 +216,9 @@ fun SettingsScreen() {
                                 }
                             }) {
                                 Icon(
-                                    imageVector = Icons.Default.Delete,
+                                    imageVector        = Icons.Default.Delete,
                                     contentDescription = "Remove $symbol",
-                                    tint = PulseRed
+                                    tint               = PulseRed
                                 )
                             }
                         }
@@ -171,19 +239,19 @@ fun SettingsScreen() {
 
             Spacer(Modifier.height(16.dp))
 
-            // Add symbol row
+            // ── Add symbol row ───────────────────────────────────────────────
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier          = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
-                    value          = input,
-                    onValueChange  = { input = it.uppercase().take(32) },
-                    label          = { Text("Add symbol") },
-                    placeholder    = { Text("e.g. AAPL or BINANCE:BTCUSDT", color = PulseSubtext) },
-                    singleLine     = true,
-                    modifier       = Modifier.weight(1f),
-                    isError        = error != null,
+                    value         = input,
+                    onValueChange = { input = it.uppercase().take(32) },
+                    label         = { Text("Add symbol") },
+                    placeholder   = { Text("e.g. AAPL or BINANCE:BTCUSDT", color = PulseSubtext) },
+                    singleLine    = true,
+                    modifier      = Modifier.weight(1f),
+                    isError       = error != null,
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Characters,
                         imeAction      = ImeAction.Done
@@ -217,5 +285,27 @@ fun SettingsScreen() {
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun HowToStep(num: String, text: String) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        modifier          = Modifier.padding(vertical = 3.dp)
+    ) {
+        Text(
+            text       = num,
+            fontSize   = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color      = PulseGreen,
+            modifier   = Modifier.width(20.dp)
+        )
+        Text(
+            text     = text,
+            fontSize = 12.sp,
+            color    = PulseSubtext,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
