@@ -112,6 +112,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.androidx.ui.tooling)
 
+    // Force profileinstaller 1.4.1 — 1.3.x crashes on Android 16 with NoSuchMethodError
+    // on PackageManager.PackageInfoFlags.of(long). Pulled transitively by activity-compose.
+    implementation(libs.profileinstaller)
+
     // Firebase Crashlytics — internal flavor only; production builds have zero Firebase code
     "internalImplementation"(platform(libs.firebase.bom))
     "internalImplementation"(libs.firebase.crashlytics)
