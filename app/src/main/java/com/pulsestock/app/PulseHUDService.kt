@@ -184,12 +184,15 @@ class PulseHUDService : Service() {
                 ) { popup, tile, tileOn -> popup || (tile && tileOn) }
                     .distinctUntilChanged()
                     .collectLatest { shouldStream ->
-                        streamManager.stopStreaming()
-                        streamManager.stopPolling()
                         if (shouldStream) {
+                            streamManager.stopPolling()
                             streamManager.startStreaming(symbols, serviceScope)
                         } else {
-                            // Poll every 60s so prices are ≤60s stale when user opens the panel/popup.
+                            // Keep WebSocket alive for 60s — if the user reopens the popup or
+                            // panel within that window, collectLatest cancels this block and we
+                            // stay on the WebSocket with no reconnect delay.
+                            kotlinx.coroutines.delay(60_000L)
+                            streamManager.stopStreaming()
                             streamManager.startPolling(symbols, serviceScope)
                         }
                     }
