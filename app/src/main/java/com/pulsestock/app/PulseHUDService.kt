@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -60,12 +61,13 @@ class PulseHUDService : Service() {
         const val NOTIFICATION_ID = 7001
         const val CHANNEL_ID      = "pulse_hud_live"
 
-        /** Observable running state for the settings screen. */
         val tileRunning   = MutableStateFlow(false)
         val bubbleRunning = MutableStateFlow(false)
 
-        val isRunning get() = tileRunning.value || bubbleRunning.value
-        // Kept so PulseTileService can still read it
+        /** Set by PulseTileService when the QS panel is open/closed. */
+        val tileVisible   = MutableStateFlow(false)
+
+        val isRunning    get() = tileRunning.value || bubbleRunning.value
         val runningState get() = tileRunning
     }
 
@@ -81,6 +83,9 @@ class PulseHUDService : Service() {
     private var popupView: View?                  = null
     private var symbolsJob: Job?                  = null
     private var currentSymbols                    = emptyList<String>()
+
+    /** True while the price popup is expanded over the screen. */
+    private val popupVisible = MutableStateFlow(false)
 
     // ── Service lifecycle ────────────────────────────────────────────────────
 
@@ -152,7 +157,7 @@ class PulseHUDService : Service() {
     // ── Shared stream / foreground ───────────────────────────────────────────
 
     private fun ensureStreamAndForeground() {
-        if (symbolsJob != null) return   // already streaming
+        if (symbolsJob != null) return
 
         val notification = buildNotification("Connecting…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -164,11 +169,30 @@ class PulseHUDService : Service() {
         lifecycleOwner.onStart()
         lifecycleOwner.onResume()
 
+        // Outer loop: restart everything when the watchlist changes.
         symbolsJob = serviceScope.launch {
             prefs.watchedSymbols.collectLatest { symbols ->
                 currentSymbols = symbols
-                streamManager.disconnect()
-                streamManager.connect(symbols, serviceScope)
+
+                // Inner loop: switch between WebSocket and REST polling based on
+                // whether anyone is actively looking at prices.
+                //   shouldStream = popup is open  OR  tile panel is open (and tile is active)
+                combine(
+                    popupVisible,
+                    tileVisible,
+                    tileRunning
+                ) { popup, tile, tileOn -> popup || (tile && tileOn) }
+                    .distinctUntilChanged()
+                    .collectLatest { shouldStream ->
+                        streamManager.stopStreaming()
+                        streamManager.stopPolling()
+                        if (shouldStream) {
+                            streamManager.startStreaming(symbols, serviceScope)
+                        } else {
+                            // Poll every 60s so prices are ≤60s stale when user opens the panel/popup.
+                            streamManager.startPolling(symbols, serviceScope)
+                        }
+                    }
             }
         }
 
@@ -177,11 +201,7 @@ class PulseHUDService : Service() {
                 val lines = currentSymbols.take(5).mapNotNull { sym ->
                     val p = snap.prices[sym] ?: return@mapNotNull null
                     val b = snap.baselines[sym]
-                    val arrow = when {
-                        b == null      -> ""
-                        p >= b         -> " ↑"
-                        else           -> " ↓"
-                    }
+                    val arrow = if (b == null) "" else if (p >= b) " ↑" else " ↓"
                     "${tickerOnly(sym)} \$${"%.2f".format(p)}$arrow"
                 }
                 if (lines.isNotEmpty()) updateNotification(lines.joinToString("  ·  "))
@@ -194,7 +214,7 @@ class PulseHUDService : Service() {
         if (!tileRunning.value && !bubbleRunning.value) {
             symbolsJob?.cancel()
             symbolsJob = null
-            streamManager.disconnect()
+            streamManager.stopAll()
             lifecycleOwner.onPause()
             lifecycleOwner.onStop()
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -374,6 +394,7 @@ class PulseHUDService : Service() {
 
     private fun showPopup() {
         if (popupView != null) return
+        popupVisible.value = true
 
         val params = LayoutParams(
             LayoutParams.MATCH_PARENT,
@@ -423,6 +444,7 @@ class PulseHUDService : Service() {
     }
 
     private fun hidePopup() {
+        popupVisible.value = false
         popupView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
         popupView = null
     }

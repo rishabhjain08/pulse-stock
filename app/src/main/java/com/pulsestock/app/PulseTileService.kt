@@ -20,6 +20,8 @@ class PulseTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        // Panel is open — if tile is active, PulseHUDService will switch to WebSocket.
+        PulseHUDService.tileVisible.value = true
         refreshTile()
     }
 
@@ -53,7 +55,11 @@ class PulseTileService : TileService() {
         refreshTile()
     }
 
-    override fun onStopListening() = Unit
+    override fun onStopListening() {
+        super.onStopListening()
+        // Panel closed — service drops back to 60s REST poll.
+        PulseHUDService.tileVisible.value = false
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -28,9 +29,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 private const val TAG = "StockStream"
-private const val FINNHUB_WS_URL   = "wss://ws.finnhub.io?token="
-private const val FINNHUB_REST_URL = "https://finnhub.io/api/v1"
+private const val FINNHUB_WS_URL    = "wss://ws.finnhub.io?token="
+private const val FINNHUB_REST_URL  = "https://finnhub.io/api/v1"
 private const val RECONNECT_DELAY_MS = 3_000L
+private const val POLL_INTERVAL_MS  = 60_000L
 
 class StockStreamManager {
 
@@ -43,7 +45,7 @@ class StockStreamManager {
 
     data class PriceSnapshot(
         val prices: Map<String, Double>,
-        /** Previous-close from REST /quote, used as the session baseline for % change. */
+        /** Previous-close baseline — % change is relative to yesterday's close. */
         val baselines: Map<String, Double>
     )
 
@@ -52,8 +54,6 @@ class StockStreamManager {
     private val wsClient = HttpClient(OkHttp) {
         install(WebSockets) { pingIntervalMillis = 20_000 }
     }
-
-    // Separate plain OkHttp client for REST calls (no Ktor plugin overhead needed).
     private val restClient = OkHttpClient()
 
     private val _snapshot = MutableSharedFlow<PriceSnapshot>(
@@ -67,46 +67,85 @@ class StockStreamManager {
 
     private val prices    = mutableMapOf<String, Double>()
     private val baselines = mutableMapOf<String, Double>()
-    private var subscribedSymbols = emptyList<String>()
-    private var socketJob: Job? = null
 
-    // ── Public API ──────────────────────────────────────────────────────────
+    private var streamJob: Job? = null
+    private var pollJob:   Job? = null
 
-    fun connect(symbols: List<String>, scope: CoroutineScope) {
+    // ── Streaming (WebSocket) ────────────────────────────────────────────────
+
+    /** Connect WebSocket for real-time ticks. Existing cached prices are kept. */
+    fun startStreaming(symbols: List<String>, scope: CoroutineScope) {
         if (symbols.isEmpty()) return
-        subscribedSymbols = symbols
-        socketJob?.cancel()
-        socketJob = scope.launch(Dispatchers.IO) {
-            // Fetch current prices via REST before the WebSocket connects so the
-            // UI shows real prices immediately rather than "--" for several seconds.
-            fetchRestQuotes(symbols, scope)
-            connectLoop(symbols)
-        }
+        stopStreaming()
+        streamJob = scope.launch(Dispatchers.IO) { connectLoop(symbols) }
     }
 
-    fun disconnect() {
-        socketJob?.cancel()
-        socketJob = null
-        prices.clear()
-        baselines.clear()
+    /** Disconnect WebSocket. Cached prices are preserved for instant display on next open. */
+    fun stopStreaming() {
+        streamJob?.cancel()
+        streamJob = null
         _connectionState.value = ConnectionState.Disconnected
     }
 
+    // ── Polling (REST every 60s) ─────────────────────────────────────────────
+
+    /** Start a 60-second REST poll loop. Fetches immediately, then every 60s. */
+    fun startPolling(symbols: List<String>, scope: CoroutineScope) {
+        if (symbols.isEmpty()) return
+        stopPolling()
+        pollJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                fetchRestQuotes(symbols, this)
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    fun stopPolling() {
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    // ── Full stop (service shutting down) ────────────────────────────────────
+
+    fun stopAll() {
+        stopStreaming()
+        stopPolling()
+        prices.clear()
+        baselines.clear()
+    }
+
     fun close() {
-        disconnect()
+        stopAll()
         wsClient.close()
         restClient.dispatcher.executorService.shutdown()
     }
 
-    // ── REST initial fetch ───────────────────────────────────────────────────
+    // ── Finnhub symbol search ────────────────────────────────────────────────
+
+    suspend fun searchSymbols(query: String): List<SymbolSearchResult> {
+        if (query.isBlank()) return emptyList()
+        return try {
+            val url  = "$FINNHUB_REST_URL/search?q=$query&token=${BuildConfig.FINNHUB_API_KEY}"
+            val body = restClient.newCall(Request.Builder().url(url).build())
+                .execute().use { it.body?.string() ?: return emptyList() }
+            json.decodeFromString<SymbolSearchResponse>(body).result
+                .filter { it.type == "Common Stock" && !it.symbol.contains(".") }
+                .take(8)
+        } catch (e: Exception) {
+            Log.w(TAG, "Symbol search error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    // ── REST quote fetch ─────────────────────────────────────────────────────
 
     private suspend fun fetchRestQuotes(symbols: List<String>, scope: CoroutineScope) {
         try {
-            // Strip exchange prefix for Finnhub REST (NASDAQ:AAPL → AAPL).
             val fetches = symbols.map { fullSymbol ->
                 scope.async(Dispatchers.IO) {
                     val ticker = finnhubTicker(fullSymbol)
-                    val url = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
+                    val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
                     try {
                         val body = restClient.newCall(Request.Builder().url(url).build())
                             .execute().use { it.body?.string() ?: return@async null }
@@ -120,8 +159,6 @@ class StockStreamManager {
             }
             fetches.awaitAll().filterNotNull().forEach { (sym, q) ->
                 prices[sym]    = q.current
-                // Use previous close as baseline so % change is vs. yesterday's close,
-                // not vs. when the user opened the app.
                 baselines[sym] = if (q.prevClose > 0.0) q.prevClose else q.current
             }
             if (prices.isNotEmpty()) {
@@ -134,23 +171,6 @@ class StockStreamManager {
         }
     }
 
-    // ── Finnhub symbol search (for autocomplete) ─────────────────────────────
-
-    suspend fun searchSymbols(query: String): List<SymbolSearchResult> {
-        if (query.isBlank()) return emptyList()
-        return try {
-            val url = "$FINNHUB_REST_URL/search?q=$query&token=${BuildConfig.FINNHUB_API_KEY}"
-            val body = restClient.newCall(Request.Builder().url(url).build())
-                .execute().use { it.body?.string() ?: return emptyList() }
-            json.decodeFromString<SymbolSearchResponse>(body).result
-                .filter { it.type == "Common Stock" && !it.symbol.contains(".") }
-                .take(8)
-        } catch (e: Exception) {
-            Log.w(TAG, "Symbol search error: ${e.message}")
-            emptyList()
-        }
-    }
-
     // ── WebSocket loop ───────────────────────────────────────────────────────
 
     private suspend fun connectLoop(symbols: List<String>) {
@@ -159,7 +179,6 @@ class StockStreamManager {
             try {
                 wsClient.webSocket("$FINNHUB_WS_URL${BuildConfig.FINNHUB_API_KEY}") {
                     _connectionState.value = ConnectionState.Connected
-                    Log.d(TAG, "WS connected — subscribing to $symbols")
                     symbols.forEach { symbol ->
                         send(Frame.Text("""{"type":"subscribe","symbol":"${finnhubTicker(symbol)}"}"""))
                     }
@@ -183,28 +202,23 @@ class StockStreamManager {
                 Log.e(TAG, "WS error: ${e.message}")
                 _connectionState.value = ConnectionState.Error(e.message ?: "Connection failed")
             }
-            if (!kotlinx.coroutines.currentCoroutineContext().isActive) return
+            if (!currentCoroutineContext().isActive) return
             delay(RECONNECT_DELAY_MS)
         }
     }
 
     private suspend fun handleTrades(trades: List<TradeData>, watchlist: List<String>) {
-        // Finnhub WebSocket sends plain tickers; map back to full symbol with exchange prefix.
         val tickerToFull = watchlist.associateBy { finnhubTicker(it) }
         trades.forEach { trade ->
             val fullSymbol = tickerToFull[trade.symbol] ?: return@forEach
             prices[fullSymbol] = trade.price
-            if (!baselines.containsKey(fullSymbol)) {
-                baselines[fullSymbol] = trade.price
-            }
+            baselines.getOrPut(fullSymbol) { trade.price }
         }
         _snapshot.emit(PriceSnapshot(prices.toMap(), baselines.toMap()))
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /** Strips the exchange prefix so Finnhub REST/WS receives just the ticker.
-     *  NASDAQ:AAPL → AAPL, AAPL → AAPL, BINANCE:BTCUSDT → BINANCE:BTCUSDT (kept for crypto/forex). */
     private fun finnhubTicker(symbol: String): String {
         val parts = symbol.split(":")
         return if (parts.size == 2 && parts[0] in US_EXCHANGES) parts[1] else symbol
