@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,10 +43,9 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -84,6 +84,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -93,7 +94,7 @@ import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.PulseHUDService
 import com.pulsestock.app.data.StockPreferences
 import com.pulsestock.app.data.StockStreamManager
-import com.pulsestock.app.data.SymbolSearchResult
+import com.pulsestock.app.data.StockSuggestion
 import com.pulsestock.app.ui.theme.PulseGreen
 import com.pulsestock.app.ui.theme.PulseRed
 import com.pulsestock.app.ui.theme.PulseSubtext
@@ -171,7 +172,7 @@ fun SettingsScreen() {
     var input        by remember { mutableStateOf("") }
     var hasError     by remember { mutableStateOf(false) }
     var isValidating by remember { mutableStateOf(false) }
-    var suggestions  by remember { mutableStateOf<List<SymbolSearchResult>>(emptyList()) }
+    var suggestions  by remember { mutableStateOf<List<StockSuggestion>>(emptyList()) }
     var showDropdown by remember { mutableStateOf(false) }
 
     // Debounced autocomplete via LaunchedEffect — cancels automatically when input changes.
@@ -213,7 +214,7 @@ fun SettingsScreen() {
                     val results = stream.searchSymbols(ticker)
                     val msg = if (results.isNotEmpty()) {
                         val hint = results.take(2)
-                            .joinToString(" or ") { r -> "${r.displaySymbol} (${r.description.take(25)})" }
+                            .joinToString(" or ") { r -> "${r.fullSymbol} (${r.name.take(25)})" }
                         "\"$ticker\" not found — did you mean: $hint?"
                     } else {
                         "\"$ticker\" not recognized — check the ticker and exchange prefix"
@@ -412,84 +413,98 @@ fun SettingsScreen() {
             // ── Add symbol with autocomplete ───────────────────────────────
             item(key = "add_field") {
                 Spacer(Modifier.height(12.dp))
-                Box {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier          = Modifier.fillMaxWidth()
-                    ) {
-                        OutlinedTextField(
-                            value         = input,
-                            onValueChange = { v ->
-                                input    = v.uppercase().take(32)
-                                hasError = false
-                            },
-                            label         = { Text("Search or type a ticker") },
-                            placeholder   = { Text("e.g. NASDAQ:AAPL", color = PulseSubtext) },
-                            singleLine    = true,
-                            modifier      = Modifier
-                                .weight(1f)
-                                .bringIntoViewRequester(bringIntoView)
-                                .onFocusChanged { fs ->
-                                    if (fs.isFocused) scope.launch {
-                                        delay(300)
-                                        bringIntoView.bringIntoView()
-                                    }
-                                },
-                            isError         = hasError,
-                            shape           = RoundedCornerShape(12.dp),
-                            trailingIcon    = if (isValidating) ({
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            }) else null,
-                            keyboardOptions = KeyboardOptions(
-                                capitalization = KeyboardCapitalization.Characters,
-                                imeAction      = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(onDone = { tryAdd() })
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        FilledIconButton(
-                            onClick  = ::tryAdd,
-                            enabled  = !isValidating,
-                            colors   = IconButtonDefaults.filledIconButtonColors(containerColor = PulseGreen)
-                        ) {
-                            Icon(Icons.Default.Add, "Add stock", tint = Color.White)
-                        }
-                    }
-
-                    DropdownMenu(
-                        expanded         = showDropdown,
-                        onDismissRequest = { showDropdown = false },
-                        modifier         = Modifier.fillMaxWidth(0.85f)
-                    ) {
-                        suggestions.forEach { result ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(result.displaySymbol,
-                                            fontWeight = FontWeight.Bold, fontSize = 14.sp, color = PulseText)
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(result.description,
-                                            fontSize = 12.sp, color = PulseSubtext, maxLines = 1,
-                                            modifier = Modifier.weight(1f))
-                                    }
-                                },
-                                onClick = {
-                                    input        = result.displaySymbol
-                                    showDropdown = false
-                                    scope.launch {
-                                        snackbarState.showSnackbar(
-                                            "Add exchange prefix — e.g. NASDAQ:${result.displaySymbol} or NYSE:${result.displaySymbol}"
-                                        )
-                                    }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier          = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value         = input,
+                        onValueChange = { v ->
+                            input    = v.uppercase().take(32)
+                            hasError = false
+                        },
+                        label         = { Text("Search by name or ticker") },
+                        placeholder   = { Text("e.g. nvidia · AAPL · micron", color = PulseSubtext) },
+                        singleLine    = true,
+                        modifier      = Modifier
+                            .weight(1f)
+                            .bringIntoViewRequester(bringIntoView)
+                            .onFocusChanged { fs ->
+                                if (fs.isFocused) scope.launch {
+                                    delay(300)
+                                    bringIntoView.bringIntoView()
                                 }
-                            )
+                            },
+                        isError         = hasError,
+                        shape           = RoundedCornerShape(12.dp),
+                        trailingIcon    = if (isValidating) ({
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }) else null,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Characters,
+                            imeAction      = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { tryAdd() })
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    FilledIconButton(
+                        onClick  = ::tryAdd,
+                        enabled  = !isValidating,
+                        colors   = IconButtonDefaults.filledIconButtonColors(containerColor = PulseGreen)
+                    ) {
+                        Icon(Icons.Default.Add, "Add stock", tint = Color.White)
+                    }
+                }
+
+                // Inline suggestions — no DropdownMenu positioning issues
+                if (showDropdown && suggestions.isNotEmpty()) {
+                    Card(
+                        modifier  = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        shape     = RoundedCornerShape(12.dp),
+                        colors    = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA)),
+                        elevation = CardDefaults.cardElevation(2.dp)
+                    ) {
+                        suggestions.forEachIndexed { i, s ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showDropdown = false
+                                        suggestions  = emptyList()
+                                        input        = ""
+                                        tryAdd(s.fullSymbol)
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    s.exchange,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = PulseGreen,
+                                    modifier = Modifier
+                                        .background(PulseGreen.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(s.ticker, fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp, color = PulseText)
+                                Spacer(Modifier.width(8.dp))
+                                Text(s.name, fontSize = 12.sp, color = PulseSubtext,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f))
+                            }
+                            if (i < suggestions.lastIndex) HorizontalDivider(thickness = 0.5.dp)
                         }
                     }
                 }
 
-                Text("Always include exchange — e.g. NASDAQ:AAPL · NYSE:GME · AMEX:SPY",
+                Text(
+                    if (showDropdown && suggestions.isNotEmpty()) "Tap a result to add it directly"
+                    else "Or type EXCHANGE:TICKER to add manually — e.g. NASDAQ:AAPL",
                     fontSize = 11.sp, color = PulseSubtext,
-                    modifier = Modifier.padding(top = 4.dp, start = 4.dp))
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
                 Spacer(Modifier.height(20.dp))
             }
 

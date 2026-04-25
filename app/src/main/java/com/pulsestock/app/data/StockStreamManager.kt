@@ -142,21 +142,48 @@ class StockStreamManager {
         null
     }
 
-    // ── Finnhub symbol search ────────────────────────────────────────────────
+    // ── Symbol search (Yahoo Finance — free, no key, substring matching) ────────
 
-    suspend fun searchSymbols(query: String): List<SymbolSearchResult> {
+    suspend fun searchSymbols(query: String): List<StockSuggestion> {
         if (query.isBlank()) return emptyList()
         return try {
-            val url  = "$FINNHUB_REST_URL/search?q=$query&token=${BuildConfig.FINNHUB_API_KEY}"
-            val body = restClient.newCall(Request.Builder().url(url).build())
-                .execute().use { it.body?.string() ?: return emptyList() }
-            json.decodeFromString<SymbolSearchResponse>(body).result
-                .filter { it.type == "Common Stock" && !it.symbol.contains(".") }
+            val q    = java.net.URLEncoder.encode(query, "UTF-8")
+            val url  = "https://query1.finance.yahoo.com/v1/finance/search" +
+                       "?q=$q&quotesCount=10&newsCount=0&listsCount=0"
+            val body = restClient.newCall(
+                Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            ).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                resp.body?.string()
+            } ?: return emptyList()
+            json.decodeFromString<YahooSearchResponse>(body)
+                .quotes
+                .filter { it.quoteType == "EQUITY" || it.quoteType == "ETF" }
+                .mapNotNull { q ->
+                    val exchange = yahooExchangeToPrefix(q.exchDisp) ?: return@mapNotNull null
+                    StockSuggestion(
+                        fullSymbol = "$exchange:${q.symbol}",
+                        ticker     = q.symbol,
+                        name       = q.shortname.ifBlank { q.longname },
+                        exchange   = exchange
+                    )
+                }
                 .take(8)
         } catch (e: Exception) {
             Log.w(TAG, "Symbol search error: ${e.message}")
             emptyList()
         }
+    }
+
+    private fun yahooExchangeToPrefix(exchDisp: String): String? = when {
+        exchDisp.equals("NASDAQ", ignoreCase = true)
+            || exchDisp.startsWith("Nasdaq", ignoreCase = true) -> "NASDAQ"
+        exchDisp.equals("NYSE", ignoreCase = true)              -> "NYSE"
+        exchDisp.contains("Arca", ignoreCase = true)            -> "NYSEARCA"
+        exchDisp.contains("American", ignoreCase = true)        -> "AMEX"
+        exchDisp.equals("CBOE", ignoreCase = true)              -> "CBOE"
+        exchDisp.equals("BATS", ignoreCase = true)              -> "BATS"
+        else -> null
     }
 
     // ── REST quote fetch ─────────────────────────────────────────────────────

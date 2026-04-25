@@ -21,23 +21,8 @@ data class TradeData(
 /** REST /api/v1/quote response. `c` = current price, `pc` = previous close. */
 @Serializable
 data class QuoteResponse(
-    @SerialName("c")  val current: Double,
-    @SerialName("pc") val prevClose: Double,
+    @SerialName("c")  val current: Double = 0.0,
+    @SerialName("pc") val prevClose: Double = 0.0,
     @SerialName("d")  val change: Double = 0.0,
     @SerialName("dp") val changePct: Double = 0.0
-)
-
-/** One result from Finnhub /api/v1/search */
-@Serializable
-data class SymbolSearchResult(
-    val description: String = "",
-    val displaySymbol: String = "",
-    val symbol: String = "",
-    val type: String = ""
-)
-
-@Serializable
-data class SymbolSearchResponse(
-    val count: Int = 0,
-    val result: List<SymbolSearchResult> = emptyList()
 )
