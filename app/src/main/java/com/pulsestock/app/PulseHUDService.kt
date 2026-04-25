@@ -214,6 +214,14 @@ class PulseHUDService : Service() {
                 triggerHapticTick()
             }
         }
+
+        // Self-stop: if both flags drop to false (e.g. tile removed by Samsung without reliable
+        // intent delivery) the service stops itself rather than leaking in the background.
+        serviceScope.launch {
+            combine(tileRunning, bubbleRunning) { t, b -> t || b }
+                .distinctUntilChanged()
+                .collect { anyRunning -> if (!anyRunning) maybeStopService() }
+        }
     }
 
     private fun maybeStopService() {
