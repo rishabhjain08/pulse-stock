@@ -127,9 +127,8 @@ class PulseHUDService : Service() {
     }
 
     private fun stopTile() {
-        val was = tileRunning.value
         tileRunning.value = false
-        if (was) serviceScope.launch { prefs.setTileActive(false) }
+        serviceScope.launch { prefs.setTileActive(false) }
         maybeStopService()
     }
 
@@ -146,7 +145,6 @@ class PulseHUDService : Service() {
     }
 
     private fun hideBubble() {
-        if (!bubbleRunning.value) return
         bubbleRunning.value = false
         serviceScope.launch { prefs.setBubbleActive(false) }
         hidePopup()

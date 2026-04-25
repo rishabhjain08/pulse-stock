@@ -235,6 +235,7 @@ fun SettingsScreen() {
     val bringIntoView = remember { BringIntoViewRequester() }
 
     Scaffold(
+        modifier = Modifier.imePadding(),   // shrinks Scaffold+SnackbarHost above keyboard
         topBar = {
             TopAppBar(
                 title = { Text("PulseStock", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = PulseText) },
@@ -249,8 +250,7 @@ fun SettingsScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp)
-                .imePadding(),
+                .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
 
