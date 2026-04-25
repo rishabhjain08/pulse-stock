@@ -11,7 +11,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,12 +46,15 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -65,7 +66,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,7 +76,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -85,10 +84,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -103,7 +100,8 @@ import com.pulsestock.app.ui.theme.PulseSubtext
 import com.pulsestock.app.ui.theme.PulseText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 private val WarnAmber   = Color(0xFFF59E0B)
 private val WarnSurface = Color(0xFFFFFBEB)
@@ -156,14 +154,22 @@ fun SettingsScreen() {
 
     // ── Symbols + drag state ─────────────────────────────────────────────────
     val symbols by prefs.watchedSymbols.collectAsState(initial = StockPreferences.DEFAULT_SYMBOLS)
-    var workingList  by remember(symbols) { mutableStateOf(symbols) }
-    var draggedIndex by remember { mutableIntStateOf(-1) }
-    var draggedOffset by remember { mutableStateOf(0f) }
-    val listState = rememberLazyListState()
+    var workingList by remember(symbols) { mutableStateOf(symbols) }
+    val listState   = rememberLazyListState()
+    val reorderState = rememberReorderableLazyListState(listState) { from, to ->
+        val fromKey = from.key as? String ?: return@rememberReorderableLazyListState
+        val toKey   = to.key   as? String ?: return@rememberReorderableLazyListState
+        val fromIdx = workingList.indexOf(fromKey)
+        val toIdx   = workingList.indexOf(toKey)
+        if (fromIdx >= 0 && toIdx >= 0) {
+            workingList = workingList.toMutableList().apply { add(toIdx, removeAt(fromIdx)) }
+        }
+    }
 
     // ── Add-symbol state ─────────────────────────────────────────────────────
+    val snackbarState = remember { SnackbarHostState() }
     var input        by remember { mutableStateOf("") }
-    var error        by remember { mutableStateOf<String?>(null) }
+    var hasError     by remember { mutableStateOf(false) }
     var isValidating by remember { mutableStateOf(false) }
     var suggestions  by remember { mutableStateOf<List<SymbolSearchResult>>(emptyList()) }
     var showDropdown by remember { mutableStateOf(false) }
@@ -185,29 +191,43 @@ fun SettingsScreen() {
         val symbol = rawSymbol.trim().uppercase()
         val formatError = StockPreferences.validate(symbol)
             ?: if (symbol in symbols) "\"$symbol\" is already in your list" else null
-        if (formatError != null) { error = formatError; return }
+        if (formatError != null) {
+            hasError = true
+            scope.launch { snackbarState.showSnackbar(formatError) }
+            return
+        }
 
         isValidating = true
-        error        = null
+        hasError     = false
         scope.launch {
             val quote = stream.fetchQuote(symbol)
             isValidating = false
-            if (quote == null || (quote.current == 0.0 && quote.prevClose == 0.0)) {
-                val ticker  = symbol.substringAfterLast(':')
-                val results = stream.searchSymbols(ticker)
-                error = if (results.isNotEmpty()) {
-                    val hint = results.take(2)
-                        .joinToString(" or ") { r -> "${r.displaySymbol} (${r.description.take(25)})" }
-                    "\"$ticker\" not found. Did you mean: $hint?"
-                } else {
-                    "\"$ticker\" not recognized — check the ticker and exchange prefix."
+            when {
+                quote == null -> {
+                    hasError = true
+                    snackbarState.showSnackbar("Network error — check your connection and try again")
                 }
-            } else {
-                prefs.updateSymbols(symbols + symbol)
-                input        = ""
-                showDropdown = false
-                suggestions  = emptyList()
-                keyboard?.hide()
+                quote.current == 0.0 && quote.prevClose == 0.0 -> {
+                    hasError = true
+                    val ticker  = symbol.substringAfterLast(':')
+                    val results = stream.searchSymbols(ticker)
+                    val msg = if (results.isNotEmpty()) {
+                        val hint = results.take(2)
+                            .joinToString(" or ") { r -> "${r.displaySymbol} (${r.description.take(25)})" }
+                        "\"$ticker\" not found — did you mean: $hint?"
+                    } else {
+                        "\"$ticker\" not recognized — check the ticker and exchange prefix"
+                    }
+                    snackbarState.showSnackbar(msg, duration = SnackbarDuration.Long)
+                }
+                else -> {
+                    hasError = false
+                    prefs.updateSymbols(symbols + symbol)
+                    input        = ""
+                    showDropdown = false
+                    suggestions  = emptyList()
+                    keyboard?.hide()
+                }
             }
         }
     }
@@ -221,6 +241,7 @@ fun SettingsScreen() {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
             )
         },
+        snackbarHost = { SnackbarHost(snackbarState) { data -> Snackbar(data) } },
         containerColor = Color.White
     ) { padding ->
         LazyColumn(
@@ -326,75 +347,54 @@ fun SettingsScreen() {
 
             // ── Reorderable stock items ────────────────────────────────────
             itemsIndexed(workingList, key = { _, s -> s }) { index, symbol ->
-                val isDragging  = draggedIndex == index
-                val elevation   by animateDpAsState(if (isDragging) 8.dp else 0.dp, label = "drag")
                 val parts    = symbol.split(":")
                 val exchange = if (parts.size == 2) parts[0] else ""
                 val ticker   = if (parts.size == 2) parts[1] else symbol
 
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 3.dp)
-                        .then(if (!isDragging) Modifier.animateItem() else Modifier)
-                        .zIndex(if (isDragging) 1f else 0f)
-                        .then(if (isDragging) Modifier.offset { IntOffset(0, draggedOffset.roundToInt()) } else Modifier)
-                        .shadow(elevation, RoundedCornerShape(12.dp))
-                        .pointerInput(workingList) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { draggedIndex = index; draggedOffset = 0f },
-                                onDragEnd   = {
-                                    scope.launch { prefs.updateSymbols(workingList) }
-                                    draggedIndex  = -1
-                                    draggedOffset = 0f
-                                },
-                                onDragCancel = { draggedIndex = -1; draggedOffset = 0f },
-                                onDrag = { _, delta ->
-                                    draggedOffset += delta.y
-                                    val cur = draggedIndex.takeIf { it >= 0 } ?: return@detectDragGesturesAfterLongPress
-                                    val h   = listState.layoutInfo.visibleItemsInfo
-                                        .firstOrNull { it.index == cur }?.size?.toFloat() ?: return@detectDragGesturesAfterLongPress
-                                    val newIdx = (cur + (draggedOffset / h).roundToInt()).coerceIn(0, workingList.lastIndex)
-                                    if (newIdx != cur) {
-                                        val m = workingList.toMutableList()
-                                        m.add(newIdx, m.removeAt(cur))
-                                        workingList   = m
-                                        draggedOffset -= (newIdx - cur) * h
-                                        draggedIndex  = newIdx
-                                    }
-                                }
-                            )
-                        },
-                    shape  = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isDragging) Color(0xFFECFDF5) else Color(0xFFF8F8F8)
-                    ),
-                    elevation = CardDefaults.cardElevation(0.dp)
-                ) {
-                    Row(
-                        modifier          = Modifier
+                ReorderableItem(reorderState, key = symbol) { isDragging ->
+                    val elevation by animateDpAsState(if (isDragging) 8.dp else 0.dp, label = "drag")
+                    Card(
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 4.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(vertical = 3.dp)
+                            .shadow(elevation, RoundedCornerShape(12.dp)),
+                        shape  = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isDragging) Color(0xFFECFDF5) else Color(0xFFF8F8F8)
+                        ),
+                        elevation = CardDefaults.cardElevation(0.dp)
                     ) {
-                        Icon(Icons.Default.DragHandle, null,
-                            tint     = PulseSubtext.copy(alpha = 0.4f),
-                            modifier = Modifier.padding(start = 8.dp, end = 4.dp).size(20.dp))
-                        Text("${index + 1}", style = TextStyle(fontSize = 12.sp), color = PulseSubtext,
-                            modifier = Modifier.width(18.dp))
-                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            if (exchange.isNotEmpty()) {
-                                Text(exchange, fontSize = 10.sp, color = PulseSubtext,
-                                    modifier = Modifier.padding(end = 4.dp))
+                        Row(
+                            modifier          = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.DragHandle, null,
+                                tint     = PulseSubtext.copy(alpha = 0.4f),
+                                modifier = Modifier
+                                    .padding(start = 8.dp, end = 4.dp)
+                                    .size(20.dp)
+                                    .longPressDraggableHandle(
+                                        onDragStopped = { scope.launch { prefs.updateSymbols(workingList) } }
+                                    )
+                            )
+                            Text("${index + 1}", style = TextStyle(fontSize = 12.sp), color = PulseSubtext,
+                                modifier = Modifier.width(18.dp))
+                            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                if (exchange.isNotEmpty()) {
+                                    Text(exchange, fontSize = 10.sp, color = PulseSubtext,
+                                        modifier = Modifier.padding(end = 4.dp))
+                                }
+                                Text(ticker, style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
+                                    color = PulseText)
                             }
-                            Text(ticker, style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
-                                color = PulseText)
-                        }
-                        IconButton(onClick = {
-                            scope.launch { prefs.updateSymbols(symbols - symbol) }
-                        }) {
-                            Icon(Icons.Default.Delete, "Remove $symbol",
-                                tint = PulseRed.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                            IconButton(onClick = {
+                                scope.launch { prefs.updateSymbols(symbols - symbol) }
+                            }) {
+                                Icon(Icons.Default.Delete, "Remove $symbol",
+                                    tint = PulseRed.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 }
@@ -420,8 +420,8 @@ fun SettingsScreen() {
                         OutlinedTextField(
                             value         = input,
                             onValueChange = { v ->
-                                input = v.uppercase().take(32)
-                                error = null
+                                input    = v.uppercase().take(32)
+                                hasError = false
                             },
                             label         = { Text("Search or type a ticker") },
                             placeholder   = { Text("e.g. NASDAQ:AAPL", color = PulseSubtext) },
@@ -435,7 +435,7 @@ fun SettingsScreen() {
                                         bringIntoView.bringIntoView()
                                     }
                                 },
-                            isError         = error != null && !error!!.startsWith("\"") ,
+                            isError         = hasError,
                             shape           = RoundedCornerShape(12.dp),
                             trailingIcon    = if (isValidating) ({
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -476,24 +476,20 @@ fun SettingsScreen() {
                                 onClick = {
                                     input        = result.displaySymbol
                                     showDropdown = false
-                                    error        = "Add exchange prefix: NASDAQ:${result.displaySymbol} or NYSE:${result.displaySymbol}"
+                                    scope.launch {
+                                        snackbarState.showSnackbar(
+                                            "Add exchange prefix — e.g. NASDAQ:${result.displaySymbol} or NYSE:${result.displaySymbol}"
+                                        )
+                                    }
                                 }
                             )
                         }
                     }
                 }
 
-                val errorColor = if (error != null && error!!.startsWith("Add exchange")) WarnAmber
-                                 else if (error != null && error!!.startsWith("Did you mean")) WarnAmber
-                                 else PulseRed
-                if (error != null) {
-                    Text(error!!, color = errorColor, fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp, start = 4.dp))
-                } else {
-                    Text("Always include exchange — e.g. NASDAQ:AAPL · NYSE:GME · AMEX:SPY",
-                        fontSize = 11.sp, color = PulseSubtext,
-                        modifier = Modifier.padding(top = 4.dp, start = 4.dp))
-                }
+                Text("Always include exchange — e.g. NASDAQ:AAPL · NYSE:GME · AMEX:SPY",
+                    fontSize = 11.sp, color = PulseSubtext,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp))
                 Spacer(Modifier.height(20.dp))
             }
 

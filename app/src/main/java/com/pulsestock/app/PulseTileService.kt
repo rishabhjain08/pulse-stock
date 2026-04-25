@@ -63,11 +63,11 @@ class PulseTileService : TileService() {
 
     override fun onTileRemoved() {
         super.onTileRemoved()
-        // User swiped the tile out of the panel — treat as explicit stop.
+        // Directly update in-memory state so the app toggle is immediately correct even if
+        // Samsung doesn't reliably deliver the startService intent before the tile process ends.
         PulseHUDService.tileVisible.value = false
-        if (PulseHUDService.tileRunning.value) {
-            sendAction(PulseHUDService.ACTION_STOP_TILE)
-        }
+        PulseHUDService.tileRunning.value = false
+        sendAction(PulseHUDService.ACTION_STOP_TILE)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

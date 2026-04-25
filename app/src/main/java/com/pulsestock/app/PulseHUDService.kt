@@ -127,9 +127,9 @@ class PulseHUDService : Service() {
     }
 
     private fun stopTile() {
-        if (!tileRunning.value) return
+        val was = tileRunning.value
         tileRunning.value = false
-        serviceScope.launch { prefs.setTileActive(false) }
+        if (was) serviceScope.launch { prefs.setTileActive(false) }
         maybeStopService()
     }
 
@@ -177,6 +177,7 @@ class PulseHUDService : Service() {
                 // Inner loop: switch between WebSocket and REST polling based on
                 // whether anyone is actively looking at prices.
                 //   shouldStream = popup is open  OR  tile panel is open (and tile is active)
+                var wasStreaming = false
                 combine(
                     popupVisible,
                     tileVisible,
@@ -185,13 +186,15 @@ class PulseHUDService : Service() {
                     .distinctUntilChanged()
                     .collectLatest { shouldStream ->
                         if (shouldStream) {
+                            wasStreaming = true
                             streamManager.stopPolling()
                             streamManager.startStreaming(symbols, serviceScope)
                         } else {
-                            // Keep WebSocket alive for 60s — if the user reopens the popup or
-                            // panel within that window, collectLatest cancels this block and we
-                            // stay on the WebSocket with no reconnect delay.
-                            kotlinx.coroutines.delay(60_000L)
+                            // Only linger on WebSocket if we were actively streaming before.
+                            // On cold start (tile just enabled, panel closed) poll immediately
+                            // so prices appear in seconds, not after a 60 s blank screen.
+                            if (wasStreaming) kotlinx.coroutines.delay(60_000L)
+                            wasStreaming = false
                             streamManager.stopStreaming()
                             streamManager.startPolling(symbols, serviceScope)
                         }
@@ -480,23 +483,21 @@ class PulseHUDService : Service() {
             .setOngoing(true)
             .setStyle(Notification.BigTextStyle().bigText(contentText))
 
-        // Independent stop buttons — each only stops its own feature.
-        if (tileRunning.value) {
-            builder.addAction(Notification.Action.Builder(
-                null, "Stop Tile",
-                PendingIntent.getService(this, 1,
-                    Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP_TILE),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            ).build())
+        builder.addAction(Notification.Action.Builder(
+            null, "Stop",
+            PendingIntent.getService(this, 1,
+                Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        ).build())
+
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        if (bubbleRunning.value) {
-            builder.addAction(Notification.Action.Builder(
-                null, "Stop Bubble",
-                PendingIntent.getService(this, 2,
-                    Intent(this, PulseHUDService::class.java).setAction(ACTION_HIDE_BUBBLE),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            ).build())
-        }
+        builder.addAction(Notification.Action.Builder(
+            null, "Open",
+            PendingIntent.getActivity(this, 2, openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        ).build())
 
         if (Build.VERSION.SDK_INT >= 36) applyNowBarExtras(builder, contentText)
 

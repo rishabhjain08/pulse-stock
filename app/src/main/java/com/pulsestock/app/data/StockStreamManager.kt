@@ -133,8 +133,10 @@ class StockStreamManager {
     suspend fun fetchQuote(fullSymbol: String): QuoteResponse? = try {
         val ticker = finnhubTicker(fullSymbol)
         val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
-        val body   = restClient.newCall(Request.Builder().url(url).build())
-            .execute().use { it.body?.string() ?: return null }
+        val body   = restClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+            if (!resp.isSuccessful) return null   // rate-limit (429), auth error (401), etc.
+            resp.body?.string()
+        } ?: return null
         json.decodeFromString<QuoteResponse>(body)
     } catch (e: Exception) {
         null
@@ -167,9 +169,12 @@ class StockStreamManager {
                     val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
                     try {
                         val body = restClient.newCall(Request.Builder().url(url).build())
-                            .execute().use { it.body?.string() ?: return@async null }
+                            .execute().use { resp ->
+                                if (!resp.isSuccessful) return@async null
+                                resp.body?.string()
+                            } ?: return@async null
                         val q = json.decodeFromString<QuoteResponse>(body)
-                        if (q.current > 0.0) fullSymbol to q else null
+                        if (q.current > 0.0 || q.prevClose > 0.0) fullSymbol to q else null
                     } catch (e: Exception) {
                         Log.w(TAG, "REST quote failed for $fullSymbol: ${e.message}")
                         null
@@ -177,7 +182,8 @@ class StockStreamManager {
                 }
             }
             fetches.awaitAll().filterNotNull().forEach { (sym, q) ->
-                prices[sym]    = q.current
+                // After-hours: Finnhub may return c=0; fall back to prevClose so we never show $0
+                prices[sym]    = if (q.current > 0.0) q.current else q.prevClose
                 baselines[sym] = if (q.prevClose > 0.0) q.prevClose else q.current
             }
             if (prices.isNotEmpty()) {
