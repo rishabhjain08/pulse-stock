@@ -15,10 +15,10 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.provider.Settings
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import androidx.annotation.RequiresApi
@@ -38,23 +38,35 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.hypot
 
 class PulseHUDService : Service() {
 
     companion object {
-        const val ACTION_START    = "com.pulsestock.ACTION_START"
-        const val ACTION_STOP     = "com.pulsestock.ACTION_STOP"
+        const val ACTION_START_TILE   = "com.pulsestock.ACTION_START_TILE"
+        const val ACTION_STOP_TILE    = "com.pulsestock.ACTION_STOP_TILE"
+        const val ACTION_SHOW_BUBBLE  = "com.pulsestock.ACTION_SHOW_BUBBLE"
+        const val ACTION_HIDE_BUBBLE  = "com.pulsestock.ACTION_HIDE_BUBBLE"
+
+        // Legacy actions kept for back-compat with PulseTileService
+        const val ACTION_START = "com.pulsestock.ACTION_START"
+        const val ACTION_STOP  = "com.pulsestock.ACTION_STOP"
+
         const val NOTIFICATION_ID = 7001
         const val CHANNEL_ID      = "pulse_hud_live"
 
-        /** Observed by SettingsScreen to reflect the Start/Stop button state. */
-        val runningState = MutableStateFlow(false)
-        val isRunning get() = runningState.value
+        /** Observable running state for the settings screen. */
+        val tileRunning   = MutableStateFlow(false)
+        val bubbleRunning = MutableStateFlow(false)
+
+        val isRunning get() = tileRunning.value || bubbleRunning.value
+        // Kept so PulseTileService can still read it
+        val runningState get() = tileRunning
     }
 
     private val serviceScope   = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -65,12 +77,13 @@ class PulseHUDService : Service() {
     private lateinit var windowManager: WindowManager
     private var floatingIcon: View?               = null
     private var floatingIconParams: LayoutParams? = null
+    private var trashOverlay: View?               = null
     private var popupView: View?                  = null
     private var symbolsJob: Job?                  = null
     private var currentSymbols                    = emptyList<String>()
-    private val showIconHint                      = MutableStateFlow(true)
 
     // ── Service lifecycle ────────────────────────────────────────────────────
+
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -79,14 +92,18 @@ class PulseHUDService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startHUD()
-            ACTION_STOP  -> { stopHUD(); stopSelf() }
+            ACTION_START_TILE, ACTION_START -> startTile()
+            ACTION_STOP_TILE               -> stopTile()
+            ACTION_SHOW_BUBBLE             -> showBubble()
+            ACTION_HIDE_BUBBLE             -> hideBubble()
+            ACTION_STOP                    -> { stopTile(); hideBubble() }
         }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        stopHUD()
+        stopTile()
+        hideBubble()
         streamManager.close()
         serviceScope.cancel()
         lifecycleOwner.onDestroy()
@@ -95,16 +112,47 @@ class PulseHUDService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // ── HUD lifecycle ────────────────────────────────────────────────────────
-    private fun startHUD() {
-        if (runningState.value) return
-        // Overlay permission is required before we can add any window.
-        // Guard here covers every start path (tile, app button, etc.).
-        if (!Settings.canDrawOverlays(this)) {
-            stopSelf()
-            return
-        }
-        runningState.value = true
+    // ── Tile mode ────────────────────────────────────────────────────────────
+
+    private fun startTile() {
+        if (tileRunning.value) return
+        tileRunning.value = true
+        ensureStreamAndForeground()
+        serviceScope.launch { prefs.setTileActive(true) }
+    }
+
+    private fun stopTile() {
+        if (!tileRunning.value) return
+        tileRunning.value = false
+        serviceScope.launch { prefs.setTileActive(false) }
+        maybeStopService()
+    }
+
+    // ── Bubble mode ──────────────────────────────────────────────────────────
+
+    private fun showBubble() {
+        if (bubbleRunning.value) return
+        if (!Settings.canDrawOverlays(this)) return
+        bubbleRunning.value = true
+        serviceScope.launch { prefs.setBubbleActive(true) }
+        ensureStreamAndForeground()
+        showFloatingIcon()
+        showPopup()
+    }
+
+    private fun hideBubble() {
+        if (!bubbleRunning.value) return
+        bubbleRunning.value = false
+        serviceScope.launch { prefs.setBubbleActive(false) }
+        hidePopup()
+        removeFloatingIcon()
+        maybeStopService()
+    }
+
+    // ── Shared stream / foreground ───────────────────────────────────────────
+
+    private fun ensureStreamAndForeground() {
+        if (symbolsJob != null) return   // already streaming
 
         val notification = buildNotification("Connecting…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -126,39 +174,38 @@ class PulseHUDService : Service() {
 
         serviceScope.launch {
             streamManager.snapshot.collect { snap ->
-                val topSymbol = currentSymbols.firstOrNull() ?: return@collect
-                val topPrice  = snap.prices[topSymbol] ?: return@collect
-                updateNotification("$topSymbol  \$${"%.2f".format(topPrice)}")
+                val lines = currentSymbols.take(5).mapNotNull { sym ->
+                    val p = snap.prices[sym] ?: return@mapNotNull null
+                    val b = snap.baselines[sym]
+                    val arrow = when {
+                        b == null      -> ""
+                        p >= b         -> " ↑"
+                        else           -> " ↓"
+                    }
+                    "${tickerOnly(sym)} \$${"%.2f".format(p)}$arrow"
+                }
+                if (lines.isNotEmpty()) updateNotification(lines.joinToString("  ·  "))
                 triggerHapticTick()
             }
         }
-
-        // Show "Hold to stop" hint label for 3 seconds on first launch
-        showIconHint.value = true
-        serviceScope.launch {
-            delay(3000L)
-            showIconHint.value = false
-        }
-
-        showFloatingIcon()
-        showPopup()  // open stock card immediately on first launch
     }
 
-    private fun stopHUD() {
-        if (!runningState.value) return
-        runningState.value = false
-
-        symbolsJob?.cancel()
-        streamManager.disconnect()
-        hidePopup()
-        removeFloatingIcon()
-        lifecycleOwner.onPause()
-        lifecycleOwner.onStop()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+    private fun maybeStopService() {
+        if (!tileRunning.value && !bubbleRunning.value) {
+            symbolsJob?.cancel()
+            symbolsJob = null
+            streamManager.disconnect()
+            lifecycleOwner.onPause()
+            lifecycleOwner.onStop()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     // ── Floating icon ────────────────────────────────────────────────────────
+
     private fun showFloatingIcon() {
+        if (floatingIcon != null) return
         val density     = resources.displayMetrics.density
         val screenWidth = resources.displayMetrics.widthPixels
 
@@ -175,19 +222,28 @@ class PulseHUDService : Service() {
         }
         floatingIconParams = params
 
+        val screenHeight = resources.displayMetrics.heightPixels
+        // Trash zone: bottom-centre, radius 60dp
+        val trashRadiusPx = (60 * density).toInt()
+        val trashCentreX  = screenWidth / 2f
+        val trashCentreY  = screenHeight - (80 * density)
+
         val wrapper = object : android.widget.FrameLayout(this@PulseHUDService) {
             private val longPressHandler = Handler(Looper.getMainLooper())
-            private var downX       = 0f
-            private var downY       = 0f
-            private var downParamX  = 0
-            private var downParamY  = 0
-            private var isDragging  = false
+            private var downX      = 0f
+            private var downY      = 0f
+            private var downParamX = 0
+            private var downParamY = 0
+            private var isDragging = false
             private var isLongPress = false
 
+            // Long press → open app (600 ms)
             private val longPressRunnable = Runnable {
                 isLongPress = true
-                stopHUD()
-                stopSelf()
+                val appIntent = Intent(this@PulseHUDService, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                startActivity(appIntent)
             }
 
             override fun onInterceptTouchEvent(ev: MotionEvent) = true
@@ -211,6 +267,7 @@ class PulseHUDService : Service() {
                         if (!isDragging && (abs(dx) > 10 || abs(dy) > 10)) {
                             isDragging = true
                             longPressHandler.removeCallbacks(longPressRunnable)
+                            showTrashOverlay()
                         }
                         if (isDragging) {
                             p.x = downParamX + dx.toInt()
@@ -218,12 +275,28 @@ class PulseHUDService : Service() {
                             if (floatingIcon?.isAttachedToWindow == true) {
                                 windowManager.updateViewLayout(this, p)
                             }
+                            // Highlight trash zone when bubble hovers over it
+                            val iconCentreX = p.x + (width / 2f)
+                            val iconCentreY = p.y + (height / 2f)
+                            val overTrash = hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx
+                            trashOverlay?.alpha = if (overTrash) 1f else 0.6f
                         }
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         longPressHandler.removeCallbacks(longPressRunnable)
-                        if (!isDragging && !isLongPress) togglePopup()
+                        if (isDragging) {
+                            hideTrashOverlay()
+                            // Drop on trash → hide bubble, keep market data if tile is active
+                            val iconCentreX = p.x + (width / 2f)
+                            val iconCentreY = p.y + (height / 2f)
+                            if (hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx) {
+                                hideBubble()
+                                return true
+                            }
+                        } else if (!isLongPress) {
+                            togglePopup()
+                        }
                         isDragging  = false
                         isLongPress = false
                         return true
@@ -233,32 +306,68 @@ class PulseHUDService : Service() {
             }
         }
 
-        // Compose 1.8+ resolves ViewTreeLifecycleOwner by traversing UP from the
-        // WindowManager root view, so owners must be set on the wrapper, not just
-        // on the inner ComposeView.
         wrapper.setViewTreeLifecycleOwner(lifecycleOwner)
         wrapper.setViewTreeViewModelStoreOwner(lifecycleOwner)
         wrapper.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
 
         val composeView = ComposeView(this).apply {
             setContent {
-                val hint by showIconHint.collectAsState()
-                PulseStockTheme { FloatingIconContent(showHint = hint) }
+                PulseStockTheme { FloatingIconContent() }
             }
         }
         wrapper.addView(composeView)
-
         windowManager.addView(wrapper, params)
         floatingIcon = wrapper
     }
 
     private fun removeFloatingIcon() {
         floatingIcon?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
-        floatingIcon      = null
+        floatingIcon       = null
         floatingIconParams = null
+        hideTrashOverlay()
+    }
+
+    // ── Trash overlay ─────────────────────────────────────────────────────────
+
+    private fun showTrashOverlay() {
+        if (trashOverlay != null) return
+        val density = resources.displayMetrics.density
+
+        val params = LayoutParams(
+            LayoutParams.MATCH_PARENT,
+            (160 * density).toInt(),
+            LayoutParams.TYPE_APPLICATION_OVERLAY,
+            LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
+
+        val view = ComposeView(this).apply {
+            alpha = 0.6f
+            setContent {
+                PulseStockTheme { com.pulsestock.app.ui.TrashZoneContent() }
+            }
+        }
+
+        val wrapper = android.widget.FrameLayout(this).apply {
+            setViewTreeLifecycleOwner(lifecycleOwner)
+            setViewTreeViewModelStoreOwner(lifecycleOwner)
+            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+            addView(view)
+        }
+
+        windowManager.addView(wrapper, params)
+        trashOverlay = wrapper
+    }
+
+    private fun hideTrashOverlay() {
+        trashOverlay?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
+        trashOverlay = null
     }
 
     // ── Stock popup ──────────────────────────────────────────────────────────
+
     private fun togglePopup() {
         if (popupView == null) showPopup() else hidePopup()
     }
@@ -293,23 +402,18 @@ class PulseHUDService : Service() {
                         symbols         = syms,
                         snapshot        = snap,
                         connectionState = state,
-                        onDismiss       = ::hidePopup  // collapses popup; service + WebSocket stay alive
+                        onDismiss       = ::hidePopup
                     )
                 }
             }
         }
 
-        // Outside tap collapses the popup only — does NOT stop the service
         val touchWrapper = object : android.widget.FrameLayout(this) {
             override fun onTouchEvent(event: MotionEvent): Boolean {
-                if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                    hidePopup()
-                    return true
-                }
+                if (event.action == MotionEvent.ACTION_OUTSIDE) { hidePopup(); return true }
                 return super.onTouchEvent(event)
             }
         }
-        // Same as floating icon: set owners on the WindowManager root.
         touchWrapper.setViewTreeLifecycleOwner(lifecycleOwner)
         touchWrapper.setViewTreeViewModelStoreOwner(lifecycleOwner)
         touchWrapper.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
@@ -324,6 +428,7 @@ class PulseHUDService : Service() {
     }
 
     // ── Notification ─────────────────────────────────────────────────────────
+
     private fun ensureChannel() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -351,9 +456,10 @@ class PulseHUDService : Service() {
 
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_pulse_tile)
-            .setContentTitle("PulseStock")
+            .setContentTitle("PulseStock · Live Prices")
             .setContentText(contentText)
             .setOngoing(true)
+            .setStyle(Notification.BigTextStyle().bigText(contentText))
             .addAction(Notification.Action.Builder(null, "Stop", stopPi).build())
 
         if (Build.VERSION.SDK_INT >= 36) applyNowBarExtras(builder, contentText)
@@ -373,6 +479,7 @@ class PulseHUDService : Service() {
     }
 
     // ── Haptics ───────────────────────────────────────────────────────────────
+
     private fun triggerHapticTick() {
         val vibrator: Vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
@@ -381,10 +488,16 @@ class PulseHUDService : Service() {
             getSystemService(VIBRATOR_SERVICE) as Vibrator
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val effect = VibrationEffect.startComposition()
-                .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.25f)
-                .compose()
-            vibrator.vibrate(effect)
+            vibrator.vibrate(
+                VibrationEffect.startComposition()
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.25f)
+                    .compose()
+            )
         }
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Returns only the ticker part for display (NASDAQ:AAPL → AAPL). */
+    private fun tickerOnly(symbol: String) = symbol.substringAfterLast(':')
 }

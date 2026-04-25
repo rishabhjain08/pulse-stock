@@ -3,6 +3,7 @@ package com.pulsestock.app.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,50 +16,59 @@ class StockPreferences(private val context: Context) {
 
     companion object {
         private val WATCHED_SYMBOLS_KEY = stringPreferencesKey("watched_symbols")
-        val DEFAULT_SYMBOLS = listOf("AAPL", "TSLA", "NVDA", "MSFT", "GOOGL")
+        private val TILE_ACTIVE_KEY     = booleanPreferencesKey("tile_active")
+        private val BUBBLE_ACTIVE_KEY   = booleanPreferencesKey("bubble_active")
+
+        val DEFAULT_SYMBOLS = listOf("NASDAQ:AAPL", "NASDAQ:TSLA", "NASDAQ:NVDA", "NASDAQ:MSFT", "NASDAQ:GOOGL")
 
         /**
          * Validates a Finnhub symbol.
-         * Accepted formats:
-         *   - US stocks:  AAPL, TSLA, BRK.B          (plain ticker, 1–10 chars)
-         *   - Crypto:     BINANCE:BTCUSDT             (EXCHANGE:SYMBOL)
-         *   - Forex:      OANDA:EUR_USD
-         * Returns null if valid, or an error string describing how to fix it.
+         * For US stocks the format is EXCHANGE:TICKER (e.g. NASDAQ:AAPL, NYSE:GME).
+         * Crypto/forex continue to use the EXCHANGE:SYMBOL convention (BINANCE:BTCUSDT).
+         * Plain tickers without an exchange prefix are also accepted for backwards compat.
          */
         fun validate(raw: String): String? {
             val s = raw.trim().uppercase()
             if (s.isBlank()) return "Enter a ticker symbol"
             val regex = Regex("^[A-Z0-9.]{1,10}(:[A-Z0-9._\\-]{1,20})?\$")
             if (!regex.matches(s)) {
-                return "Invalid format. Use AAPL for US stocks, or EXCHANGE:SYMBOL for crypto/forex — e.g. BINANCE:BTCUSDT or OANDA:EUR_USD"
+                return "Invalid format — use EXCHANGE:TICKER, e.g. NASDAQ:AAPL or NYSE:GME"
             }
             return null
         }
     }
 
-    /**
-     * Emits the current watchlist.
-     * - Key absent (first launch): returns DEFAULT_SYMBOLS
-     * - Key present but empty string (user removed all): returns empty list
-     */
     val watchedSymbols: Flow<List<String>> = context.dataStore.data.map { prefs ->
         val raw = prefs[WATCHED_SYMBOLS_KEY]
-        if (raw == null) {
-            DEFAULT_SYMBOLS
-        } else {
-            raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
-        }
+        if (raw == null) DEFAULT_SYMBOLS
+        else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    /** Whether the Quick Settings tile is showing live prices. */
+    val tileActive: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[TILE_ACTIVE_KEY] ?: false
+    }
+
+    /** Whether the floating price bubble is visible. */
+    val bubbleActive: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[BUBBLE_ACTIVE_KEY] ?: false
     }
 
     suspend fun updateSymbols(symbols: List<String>) {
         context.dataStore.edit { prefs ->
-            // Always write the key (even as empty string) so a null read
-            // continues to mean "never set" → use defaults only on first launch.
             prefs[WATCHED_SYMBOLS_KEY] = symbols
                 .map { it.trim().uppercase() }
                 .filter { it.isNotBlank() }
                 .distinct()
                 .joinToString(",")
         }
+    }
+
+    suspend fun setTileActive(active: Boolean) {
+        context.dataStore.edit { it[TILE_ACTIVE_KEY] = active }
+    }
+
+    suspend fun setBubbleActive(active: Boolean) {
+        context.dataStore.edit { it[BUBBLE_ACTIVE_KEY] = active }
     }
 }

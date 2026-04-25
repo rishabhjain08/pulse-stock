@@ -12,6 +12,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -22,61 +24,50 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 private const val TAG = "StockStream"
-private const val FINNHUB_WS_URL = "wss://ws.finnhub.io?token="
+private const val FINNHUB_WS_URL   = "wss://ws.finnhub.io?token="
+private const val FINNHUB_REST_URL = "https://finnhub.io/api/v1"
 private const val RECONNECT_DELAY_MS = 3_000L
 
-/**
- * Manages the Finnhub WebSocket connection.
- *
- * Lifecycle contract (enforced by PulseHUDService):
- *   connect() when HUD becomes visible
- *   disconnect() immediately when HUD is dismissed
- *   close() only when the service is destroyed
- */
 class StockStreamManager {
 
     sealed class ConnectionState {
-        object Connecting : ConnectionState()
-        object Connected : ConnectionState()
+        object Connecting   : ConnectionState()
+        object Connected    : ConnectionState()
         object Disconnected : ConnectionState()
         data class Error(val message: String) : ConnectionState()
     }
 
     data class PriceSnapshot(
-        /** Latest price per symbol. */
         val prices: Map<String, Double>,
-        /**
-         * First-received price per symbol, used as the session baseline
-         * to compute percentage change (not a true "day open" — for that
-         * you'd call /api/v1/quote, which is a future enhancement).
-         */
+        /** Previous-close from REST /quote, used as the session baseline for % change. */
         val baselines: Map<String, Double>
     )
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val client = HttpClient(OkHttp) {
-        install(WebSockets) {
-            pingIntervalMillis = 20_000   // keepalive ping every 20 s (Ktor 3.x API)
-        }
+    private val wsClient = HttpClient(OkHttp) {
+        install(WebSockets) { pingIntervalMillis = 20_000 }
     }
+
+    // Separate plain OkHttp client for REST calls (no Ktor plugin overhead needed).
+    private val restClient = OkHttpClient()
 
     private val _snapshot = MutableSharedFlow<PriceSnapshot>(
         replay = 1,
-        extraBufferCapacity = 128   // absorb bursts without back-pressure on the WS thread
+        extraBufferCapacity = 128
     )
     val snapshot: SharedFlow<PriceSnapshot> = _snapshot.asSharedFlow()
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
-    // Mutable state updated on the IO thread
-    private val prices = mutableMapOf<String, Double>()
+    private val prices    = mutableMapOf<String, Double>()
     private val baselines = mutableMapOf<String, Double>()
     private var subscribedSymbols = emptyList<String>()
-
     private var socketJob: Job? = null
 
     // ── Public API ──────────────────────────────────────────────────────────
@@ -86,6 +77,9 @@ class StockStreamManager {
         subscribedSymbols = symbols
         socketJob?.cancel()
         socketJob = scope.launch(Dispatchers.IO) {
+            // Fetch current prices via REST before the WebSocket connects so the
+            // UI shows real prices immediately rather than "--" for several seconds.
+            fetchRestQuotes(symbols, scope)
             connectLoop(symbols)
         }
     }
@@ -98,38 +92,84 @@ class StockStreamManager {
         _connectionState.value = ConnectionState.Disconnected
     }
 
-    /** Call only once when the hosting service is destroyed. */
     fun close() {
         disconnect()
-        client.close()
+        wsClient.close()
+        restClient.dispatcher.executorService.shutdown()
     }
 
-    // ── Internal ─────────────────────────────────────────────────────────────
+    // ── REST initial fetch ───────────────────────────────────────────────────
+
+    private suspend fun fetchRestQuotes(symbols: List<String>, scope: CoroutineScope) {
+        try {
+            // Strip exchange prefix for Finnhub REST (NASDAQ:AAPL → AAPL).
+            val fetches = symbols.map { fullSymbol ->
+                scope.async(Dispatchers.IO) {
+                    val ticker = finnhubTicker(fullSymbol)
+                    val url = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
+                    try {
+                        val body = restClient.newCall(Request.Builder().url(url).build())
+                            .execute().use { it.body?.string() ?: return@async null }
+                        val q = json.decodeFromString<QuoteResponse>(body)
+                        if (q.current > 0.0) fullSymbol to q else null
+                    } catch (e: Exception) {
+                        Log.w(TAG, "REST quote failed for $fullSymbol: ${e.message}")
+                        null
+                    }
+                }
+            }
+            fetches.awaitAll().filterNotNull().forEach { (sym, q) ->
+                prices[sym]    = q.current
+                // Use previous close as baseline so % change is vs. yesterday's close,
+                // not vs. when the user opened the app.
+                baselines[sym] = if (q.prevClose > 0.0) q.prevClose else q.current
+            }
+            if (prices.isNotEmpty()) {
+                _snapshot.emit(PriceSnapshot(prices.toMap(), baselines.toMap()))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "REST batch fetch error: ${e.message}")
+        }
+    }
+
+    // ── Finnhub symbol search (for autocomplete) ─────────────────────────────
+
+    suspend fun searchSymbols(query: String): List<SymbolSearchResult> {
+        if (query.isBlank()) return emptyList()
+        return try {
+            val url = "$FINNHUB_REST_URL/search?q=$query&token=${BuildConfig.FINNHUB_API_KEY}"
+            val body = restClient.newCall(Request.Builder().url(url).build())
+                .execute().use { it.body?.string() ?: return emptyList() }
+            json.decodeFromString<SymbolSearchResponse>(body).result
+                .filter { it.type == "Common Stock" && !it.symbol.contains(".") }
+                .take(8)
+        } catch (e: Exception) {
+            Log.w(TAG, "Symbol search error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    // ── WebSocket loop ───────────────────────────────────────────────────────
 
     private suspend fun connectLoop(symbols: List<String>) {
         while (true) {
             _connectionState.value = ConnectionState.Connecting
             try {
-                client.webSocket("$FINNHUB_WS_URL${BuildConfig.FINNHUB_API_KEY}") {
+                wsClient.webSocket("$FINNHUB_WS_URL${BuildConfig.FINNHUB_API_KEY}") {
                     _connectionState.value = ConnectionState.Connected
-                    Log.d(TAG, "Connected — subscribing to $symbols")
-
-                    // Subscribe to each symbol
-                    // Ktor 3.x: send(String) extension removed; use Frame.Text explicitly
+                    Log.d(TAG, "WS connected — subscribing to $symbols")
                     symbols.forEach { symbol ->
-                        send(Frame.Text("""{"type":"subscribe","symbol":"$symbol"}"""))
+                        send(Frame.Text("""{"type":"subscribe","symbol":"${finnhubTicker(symbol)}"}"""))
                     }
-
                     for (frame in incoming) {
                         if (frame !is Frame.Text) continue
-                        val text = frame.readText()
-
                         try {
-                            val msg = json.decodeFromString<FinnhubMessage>(text)
+                            val msg = json.decodeFromString<FinnhubMessage>(frame.readText())
                             when (msg.type) {
                                 "trade" -> handleTrades(msg.data ?: emptyList(), symbols)
                                 "error" -> Log.w(TAG, "Finnhub error: ${msg.msg}")
-                                "ping"  -> { /* keepalive, ignore */ }
                             }
                         } catch (e: Exception) {
                             Log.w(TAG, "Parse error: ${e.message}")
@@ -137,28 +177,40 @@ class StockStreamManager {
                     }
                 }
             } catch (e: CancellationException) {
-                // Intentional disconnect — do not reconnect
                 _connectionState.value = ConnectionState.Disconnected
                 return
             } catch (e: Exception) {
-                Log.e(TAG, "WebSocket error: ${e.message}")
+                Log.e(TAG, "WS error: ${e.message}")
                 _connectionState.value = ConnectionState.Error(e.message ?: "Connection failed")
             }
-
-            // Wait before reconnecting (only if still active)
             if (!kotlinx.coroutines.currentCoroutineContext().isActive) return
             delay(RECONNECT_DELAY_MS)
         }
     }
 
     private suspend fun handleTrades(trades: List<TradeData>, watchlist: List<String>) {
+        // Finnhub WebSocket sends plain tickers; map back to full symbol with exchange prefix.
+        val tickerToFull = watchlist.associateBy { finnhubTicker(it) }
         trades.forEach { trade ->
-            if (trade.symbol !in watchlist) return@forEach
-            prices[trade.symbol] = trade.price
-            if (!baselines.containsKey(trade.symbol)) {
-                baselines[trade.symbol] = trade.price
+            val fullSymbol = tickerToFull[trade.symbol] ?: return@forEach
+            prices[fullSymbol] = trade.price
+            if (!baselines.containsKey(fullSymbol)) {
+                baselines[fullSymbol] = trade.price
             }
         }
         _snapshot.emit(PriceSnapshot(prices.toMap(), baselines.toMap()))
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /** Strips the exchange prefix so Finnhub REST/WS receives just the ticker.
+     *  NASDAQ:AAPL → AAPL, AAPL → AAPL, BINANCE:BTCUSDT → BINANCE:BTCUSDT (kept for crypto/forex). */
+    private fun finnhubTicker(symbol: String): String {
+        val parts = symbol.split(":")
+        return if (parts.size == 2 && parts[0] in US_EXCHANGES) parts[1] else symbol
+    }
+
+    companion object {
+        private val US_EXCHANGES = setOf("NYSE", "NASDAQ", "AMEX", "NYSEARCA", "BATS", "CBOE")
     }
 }

@@ -45,13 +45,28 @@ fun StockRow(
         verticalAlignment    = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // ── Ticker symbol ─────────────────────────────────────────────────
-        Text(
-            text       = symbol,
-            style      = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
-            color      = PulseText,
-            modifier   = Modifier.weight(1f)
-        )
+        // ── Exchange + ticker (NASDAQ dimmed, AAPL bold) ──────────────────
+        val parts    = symbol.split(":")
+        val exchange = if (parts.size == 2) parts[0] else ""
+        val ticker   = if (parts.size == 2) parts[1] else symbol
+        Row(
+            modifier          = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (exchange.isNotEmpty()) {
+                Text(
+                    text     = exchange,
+                    style    = TextStyle(fontSize = 11.sp),
+                    color    = PulseSubtext,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            }
+            Text(
+                text  = ticker,
+                style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                color = PulseText
+            )
+        }
 
         // ── Live price with odometer animation ────────────────────────────
         if (price != null) {

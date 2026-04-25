@@ -8,14 +8,13 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
 /**
- * Quick Settings tile that starts/stops PulseHUDService.
+ * Quick Settings tile for PulseStock.
  *
- * Flow:
- *  1. User adds "PulseStock" tile to their Quick Settings panel.
- *  2. Tapping the tile:
- *     a. If SYSTEM_ALERT_WINDOW is not granted → opens the permission screen.
- *     b. If granted and HUD is off → starts PulseHUDService (foreground).
- *     c. If granted and HUD is on  → stops PulseHUDService.
+ * - Tap:       toggle live prices on/off in the tile (independent of the bubble)
+ * - Long press: open the PulseStock app
+ *
+ * The tile and bubble are fully independent — both are backed by the same
+ * live data stream but can be started and stopped separately from the app.
  */
 class PulseTileService : TileService() {
 
@@ -28,65 +27,78 @@ class PulseTileService : TileService() {
         super.onClick()
 
         if (!Settings.canDrawOverlays(this)) {
-            // Permission not granted — send user to settings.
-            // Android 14+ (API 34): startActivityAndCollapse(Intent) throws
-            // UnsupportedOperationException; must use PendingIntent overload.
+            // Need overlay permission before any UI can show — send user to settings.
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            val pendingIntent = PendingIntent.getActivity(
+            val pi = PendingIntent.getActivity(
                 this, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startActivityAndCollapse(pendingIntent)
+                startActivityAndCollapse(pi)
             } else {
+                @Suppress("DEPRECATION")
                 startActivityAndCollapse(intent)
             }
             return
         }
 
-        if (PulseHUDService.isRunning) {
-            stopHUD()
+        if (PulseHUDService.tileRunning.value) {
+            sendAction(PulseHUDService.ACTION_STOP_TILE)
         } else {
-            startHUD()
+            sendForegroundAction(PulseHUDService.ACTION_START_TILE)
         }
 
         refreshTile()
     }
 
-    override fun onStopListening() {
-        super.onStopListening()
+    // Long press opens the app.
+    override fun onLongClick() {
+        val pi = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startActivityAndCollapse(pi)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            })
+        }
     }
 
+    override fun onStopListening() = Unit
+
     // ── Helpers ───────────────────────────────────────────────────────────────
-    private fun startHUD() {
-        val intent = Intent(this, PulseHUDService::class.java)
-            .setAction(PulseHUDService.ACTION_START)
+
+    private fun refreshTile() {
+        val tile = qsTile ?: return
+        if (PulseHUDService.tileRunning.value) {
+            tile.state    = Tile.STATE_ACTIVE
+            tile.subtitle = "Live prices on"
+        } else {
+            tile.state    = Tile.STATE_INACTIVE
+            tile.subtitle = "Tap to enable"
+        }
+        tile.label = "PulseStock"
+        tile.updateTile()
+    }
+
+    private fun sendAction(action: String) {
+        startService(Intent(this, PulseHUDService::class.java).setAction(action))
+    }
+
+    private fun sendForegroundAction(action: String) {
+        val intent = Intent(this, PulseHUDService::class.java).setAction(action)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
             startService(intent)
         }
-    }
-
-    private fun stopHUD() {
-        startService(
-            Intent(this, PulseHUDService::class.java)
-                .setAction(PulseHUDService.ACTION_STOP)
-        )
-    }
-
-    private fun refreshTile() {
-        val tile = qsTile ?: return
-        if (PulseHUDService.isRunning) {
-            tile.state    = Tile.STATE_ACTIVE
-            tile.subtitle = "Live"
-        } else {
-            tile.state    = Tile.STATE_INACTIVE
-            tile.subtitle = "Tap to start"
-        }
-        tile.label = "PulseStock"
-        tile.updateTile()
     }
 }
