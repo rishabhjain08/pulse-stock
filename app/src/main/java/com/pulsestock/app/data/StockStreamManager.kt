@@ -73,11 +73,18 @@ class StockStreamManager {
 
     // ── Streaming (WebSocket) ────────────────────────────────────────────────
 
-    /** Connect WebSocket for real-time ticks. Existing cached prices are kept. */
+    /**
+     * Connect WebSocket for real-time ticks.
+     * Always does a REST /quote fetch first so prices are never blank —
+     * this covers after-hours when the WebSocket connects but Finnhub sends no trades.
+     */
     fun startStreaming(symbols: List<String>, scope: CoroutineScope) {
         if (symbols.isEmpty()) return
         stopStreaming()
-        streamJob = scope.launch(Dispatchers.IO) { connectLoop(symbols) }
+        streamJob = scope.launch(Dispatchers.IO) {
+            fetchRestQuotes(symbols, this)  // guaranteed current price regardless of market hours
+            connectLoop(symbols)            // overlays real-time ticks on top during trading hours
+        }
     }
 
     /** Disconnect WebSocket. Cached prices are preserved for instant display on next open. */
