@@ -53,25 +53,6 @@ class PulseTileService : TileService() {
         refreshTile()
     }
 
-    // Long press opens the app.
-    override fun onLongClick() {
-        val pi = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startActivityAndCollapse(pi)
-        } else {
-            @Suppress("DEPRECATION")
-            startActivityAndCollapse(Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            })
-        }
-    }
-
     override fun onStopListening() = Unit
 
     // ── Helpers ───────────────────────────────────────────────────────────────
