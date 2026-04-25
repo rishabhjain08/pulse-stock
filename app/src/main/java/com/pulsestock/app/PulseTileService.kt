@@ -61,6 +61,15 @@ class PulseTileService : TileService() {
         PulseHUDService.tileVisible.value = false
     }
 
+    override fun onTileRemoved() {
+        super.onTileRemoved()
+        // User swiped the tile out of the panel — treat as explicit stop.
+        PulseHUDService.tileVisible.value = false
+        if (PulseHUDService.tileRunning.value) {
+            sendAction(PulseHUDService.ACTION_STOP_TILE)
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun refreshTile() {

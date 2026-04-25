@@ -128,6 +128,18 @@ class StockStreamManager {
         restClient.dispatcher.executorService.shutdown()
     }
 
+    // ── Single-symbol quote (used for add-stock validation) ─────────────────
+
+    suspend fun fetchQuote(fullSymbol: String): QuoteResponse? = try {
+        val ticker = finnhubTicker(fullSymbol)
+        val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
+        val body   = restClient.newCall(Request.Builder().url(url).build())
+            .execute().use { it.body?.string() ?: return null }
+        json.decodeFromString<QuoteResponse>(body)
+    } catch (e: Exception) {
+        null
+    }
+
     // ── Finnhub symbol search ────────────────────────────────────────────────
 
     suspend fun searchSymbols(query: String): List<SymbolSearchResult> {

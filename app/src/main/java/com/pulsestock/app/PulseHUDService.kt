@@ -473,19 +473,30 @@ class PulseHUDService : Service() {
     private fun buildNotification(contentText: String): Notification {
         ensureChannel()
 
-        val stopPi = PendingIntent.getService(
-            this, 0,
-            Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_pulse_tile)
             .setContentTitle("PulseStock · Live Prices")
             .setContentText(contentText)
             .setOngoing(true)
             .setStyle(Notification.BigTextStyle().bigText(contentText))
-            .addAction(Notification.Action.Builder(null, "Stop", stopPi).build())
+
+        // Independent stop buttons — each only stops its own feature.
+        if (tileRunning.value) {
+            builder.addAction(Notification.Action.Builder(
+                null, "Stop Tile",
+                PendingIntent.getService(this, 1,
+                    Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP_TILE),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            ).build())
+        }
+        if (bubbleRunning.value) {
+            builder.addAction(Notification.Action.Builder(
+                null, "Stop Bubble",
+                PendingIntent.getService(this, 2,
+                    Intent(this, PulseHUDService::class.java).setAction(ACTION_HIDE_BUBBLE),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            ).build())
+        }
 
         if (Build.VERSION.SDK_INT >= 36) applyNowBarExtras(builder, contentText)
 
