@@ -176,7 +176,7 @@ fun TrashZoneContent(isHovered: Boolean = false) {
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier            = Modifier.padding(bottom = 20.dp)
+            modifier            = Modifier.padding(bottom = 30.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 if (isHovered) {
