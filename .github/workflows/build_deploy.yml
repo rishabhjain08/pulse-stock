@@ -91,6 +91,6 @@ jobs:
           packageName: com.pulsestock.app
           releaseFiles: app/build/outputs/bundle/internalRelease/app-internal-release.aab
           tracks: internal
-          status: draft
+          status: completed
           releaseName: "Build ${{ github.run_number }}"
           whatsNewDirectory: distribution/whatsnew
