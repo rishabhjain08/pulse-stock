@@ -221,18 +221,21 @@ class PulseHUDService : Service() {
         floatingIconParams = params
 
         val screenHeight = resources.displayMetrics.heightPixels
-        val trashRadiusPx = (60 * density).toInt()
+        val trashRadiusPx = (72 * density).toInt()
         val trashCentreX  = screenWidth / 2f
+        // Inset from bottom: overlay sits at Gravity.BOTTOM, height=160dp, circle centred at 80dp from bottom.
+        // Use windowManager display bounds so nav bar insets don't skew the hit target.
         val trashCentreY  = screenHeight - (80 * density)
 
         val wrapper = object : android.widget.FrameLayout(this@PulseHUDService) {
             private val longPressHandler = Handler(Looper.getMainLooper())
-            private var downX      = 0f
-            private var downY      = 0f
-            private var downParamX = 0
-            private var downParamY = 0
-            private var isDragging = false
-            private var isLongPress = false
+            private var downX           = 0f
+            private var downY           = 0f
+            private var downParamX      = 0
+            private var downParamY      = 0
+            private var isDragging      = false
+            private var isLongPress     = false
+            private var wasOverTrash    = false
 
             private val longPressRunnable = Runnable {
                 isLongPress = true
@@ -248,12 +251,13 @@ class PulseHUDService : Service() {
                 val p = floatingIconParams ?: return false
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        downX       = event.rawX
-                        downY       = event.rawY
-                        downParamX  = p.x
-                        downParamY  = p.y
-                        isDragging  = false
-                        isLongPress = false
+                        downX        = event.rawX
+                        downY        = event.rawY
+                        downParamX   = p.x
+                        downParamY   = p.y
+                        isDragging   = false
+                        isLongPress  = false
+                        wasOverTrash = false
                         longPressHandler.postDelayed(longPressRunnable, 600L)
                         return true
                     }
@@ -274,23 +278,23 @@ class PulseHUDService : Service() {
                             val iconCentreX = p.x + (width / 2f)
                             val iconCentreY = p.y + (height / 2f)
                             val overTrash = hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx
+                            if (overTrash && !wasOverTrash) triggerHapticTick()
+                            wasOverTrash       = overTrash
                             trashHovered.value = overTrash
                         }
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         longPressHandler.removeCallbacks(longPressRunnable)
+                        val dismissNow = isDragging && wasOverTrash
                         hideTrashOverlay()
-                        if (isDragging) {
-                            val iconCentreX = p.x + (width / 2f)
-                            val iconCentreY = p.y + (height / 2f)
-                            if (hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx) {
-                                isDragging  = false
-                                isLongPress = false
-                                hideBubble()
-                                return true
-                            }
-                        } else if (!isLongPress) {
+                        wasOverTrash = false
+                        if (dismissNow) {
+                            isDragging  = false
+                            isLongPress = false
+                            Handler(Looper.getMainLooper()).post { hideBubble() }
+                            return true
+                        } else if (!isDragging && !isLongPress) {
                             togglePopup()
                         }
                         isDragging  = false
