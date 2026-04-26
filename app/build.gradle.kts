@@ -111,6 +111,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation("sh.calvin.reorderable:reorderable-android:2.5.1")
+    implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
     debugImplementation(libs.androidx.ui.tooling)
 
     // Force profileinstaller 1.4.1 — 1.3.x crashes on Android 16 with NoSuchMethodError

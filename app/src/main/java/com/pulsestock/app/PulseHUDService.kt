@@ -27,6 +27,9 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.dynamicanimation.animation.FloatPropertyCompat
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
 import com.pulsestock.app.data.StockPreferences
 import com.pulsestock.app.data.StockStreamManager
 import com.pulsestock.app.ui.FloatingIconContent
@@ -39,6 +42,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -74,6 +78,8 @@ class PulseHUDService : Service() {
     private var floatingIconParams: LayoutParams? = null
     private var trashOverlay: View?               = null
     private var popupView: View?                  = null
+    private var popupParams: LayoutParams?        = null
+    private var lastPopupY: Int                   = 80
     private var symbolsJob: Job?                  = null
     private var currentSymbols                    = emptyList<String>()
 
@@ -146,6 +152,9 @@ class PulseHUDService : Service() {
 
         lifecycleOwner.onStart()
         lifecycleOwner.onResume()
+
+        // Restore saved popup position.
+        serviceScope.launch { lastPopupY = prefs.popupY.first() }
 
         // Outer loop: restart everything when the watchlist changes.
         symbolsJob = serviceScope.launch {
@@ -224,7 +233,7 @@ class PulseHUDService : Service() {
         floatingIconParams = params
 
         val screenHeight = resources.displayMetrics.heightPixels
-        val trashRadiusPx = (72 * density).toInt()
+        val trashRadiusPx = (120 * density).toInt()
         val trashCentreX  = screenWidth / 2f
         // Inset from bottom: overlay sits at Gravity.BOTTOM, height=160dp, circle centred at 80dp from bottom.
         // Use windowManager display bounds so nav bar insets don't skew the hit target.
@@ -239,7 +248,7 @@ class PulseHUDService : Service() {
             private var isDragging      = false
             private var isLongPress     = false
             private var wasOverTrash    = false
-            private var snapAnimator: android.animation.ValueAnimator? = null
+            private var snapAnim: SpringAnimation? = null
 
             private val longPressRunnable = Runnable {
                 isLongPress = true
@@ -251,18 +260,25 @@ class PulseHUDService : Service() {
 
             private fun snapToEdge() {
                 val p = floatingIconParams ?: return
-                val margin = (14 * density).toInt()
+                val margin  = (14 * density).toInt()
                 val targetX = if (p.x + width / 2 < screenWidth / 2) margin
                               else screenWidth - width - margin
-                snapAnimator?.cancel()
+                snapAnim?.cancel()
                 val self = this
-                snapAnimator = android.animation.ValueAnimator.ofInt(p.x, targetX).apply {
-                    duration = 300
-                    interpolator = android.view.animation.OvershootInterpolator(0.8f)
-                    addUpdateListener { anim ->
-                        p.x = anim.animatedValue as Int
-                        if (self.isAttachedToWindow) windowManager.updateViewLayout(self, p)
-                    }
+                snapAnim = SpringAnimation(
+                    p,
+                    object : FloatPropertyCompat<LayoutParams>("x") {
+                        override fun getValue(lp: LayoutParams) = lp.x.toFloat()
+                        override fun setValue(lp: LayoutParams, value: Float) {
+                            lp.x = value.toInt()
+                            if (self.isAttachedToWindow) windowManager.updateViewLayout(self, lp)
+                        }
+                    },
+                    targetX.toFloat()
+                ).apply {
+                    spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
+                    spring.stiffness    = SpringForce.STIFFNESS_MEDIUM
+                    setStartValue(p.x.toFloat())
                     start()
                 }
             }
@@ -281,7 +297,7 @@ class PulseHUDService : Service() {
                         isLongPress  = false
                         wasOverTrash = false
                         bubblePressed.value = true
-                        snapAnimator?.cancel()
+                        snapAnim?.cancel()
                         longPressHandler.postDelayed(longPressRunnable, 600L)
                         return true
                     }
@@ -407,29 +423,32 @@ class PulseHUDService : Service() {
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
-            LayoutParams.FLAG_NOT_FOCUSABLE
-                    or LayoutParams.FLAG_NOT_TOUCH_MODAL
-                    or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            // No FLAG_WATCH_OUTSIDE_TOUCH: that caused a race where ACTION_OUTSIDE
+            // closed the popup, then ACTION_UP on the bubble immediately re-opened it.
+            LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 80
+            y = lastPopupY
         }
+        popupParams = params
 
         val composeView = ComposeView(this).apply {
             setContent {
-                val snap  by streamManager.snapshot.collectAsState(
+                val snap   by streamManager.snapshot.collectAsState(
                     initial = StockStreamManager.PriceSnapshot(emptyMap(), emptyMap())
                 )
-                val state by streamManager.connectionState.collectAsState()
-                val syms  by prefs.watchedSymbols.collectAsState(
+                val state  by streamManager.connectionState.collectAsState()
+                val syms   by prefs.watchedSymbols.collectAsState(
                     initial = StockPreferences.DEFAULT_SYMBOLS
                 )
+                val lastMs by lastRefreshMs.collectAsState()
                 PulseStockTheme {
                     HUDContent(
                         symbols         = syms,
                         snapshot        = snap,
                         connectionState = state,
+                        lastRefreshMs   = lastMs,
                         onDismiss       = ::hidePopup
                     )
                 }
@@ -437,8 +456,58 @@ class PulseHUDService : Service() {
         }
 
         val touchWrapper = object : android.widget.FrameLayout(this) {
+            private var downRawY      = 0f
+            private var downParamY    = 0
+            private var draggingPopup = false
+
+            override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+                when (ev.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downRawY      = ev.rawY
+                        downParamY    = popupParams?.y ?: lastPopupY
+                        draggingPopup = false
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (!draggingPopup && abs(ev.rawY - downRawY) > 20) {
+                            draggingPopup = true
+                            return true
+                        }
+                    }
+                }
+                return false
+            }
+
             override fun onTouchEvent(event: MotionEvent): Boolean {
-                if (event.action == MotionEvent.ACTION_OUTSIDE) { hidePopup(); return true }
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downRawY      = event.rawY
+                        downParamY    = popupParams?.y ?: lastPopupY
+                        draggingPopup = false
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (!draggingPopup && abs(event.rawY - downRawY) > 20) {
+                            draggingPopup = true
+                        }
+                        if (draggingPopup) {
+                            val pp = popupParams ?: return true
+                            // Gravity.BOTTOM: positive y = offset from bottom upward
+                            pp.y = (downParamY + (downRawY - event.rawY).toInt()).coerceAtLeast(0)
+                            if (isAttachedToWindow) windowManager.updateViewLayout(this, pp)
+                            return true
+                        }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (draggingPopup) {
+                            draggingPopup = false
+                            popupParams?.y?.let { y ->
+                                lastPopupY = y
+                                serviceScope.launch { prefs.setPopupY(y) }
+                            }
+                            return true
+                        }
+                    }
+                }
                 return super.onTouchEvent(event)
             }
         }
@@ -452,6 +521,7 @@ class PulseHUDService : Service() {
 
     private fun hidePopup() {
         popupVisible.value = false
+        popupParams = null
         popupView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         popupView = null
     }

@@ -39,6 +39,7 @@ fun HUDContent(
     symbols: List<String>,
     snapshot: StockStreamManager.PriceSnapshot,
     connectionState: StockStreamManager.ConnectionState,
+    lastRefreshMs: Long,
     onDismiss: () -> Unit
 ) {
     Box(
@@ -61,7 +62,6 @@ fun HUDContent(
                         .padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Connection dot
                     Box(
                         modifier = Modifier
                             .size(8.dp)
@@ -71,25 +71,23 @@ fun HUDContent(
                     Spacer(Modifier.width(8.dp))
 
                     Text(
-                        text     = "PulseStock",
-                        style    = MaterialTheme.typography.titleSmall,
+                        text       = "PulseStock",
+                        style      = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color    = PulseText,
-                        modifier = Modifier.weight(1f)
+                        color      = PulseText,
+                        modifier   = Modifier.weight(1f)
                     )
 
-                    // Status label
                     Text(
-                        text  = connectionLabel(connectionState),
+                        text     = connectionLabel(connectionState, lastRefreshMs),
                         fontSize = 11.sp,
-                        color = PulseSubtext
+                        color    = PulseSubtext
                     )
                     Spacer(Modifier.width(4.dp))
 
-                    // Close button
                     TextButton(
-                        onClick      = onDismiss,
-                        modifier     = Modifier.height(36.dp)
+                        onClick  = onDismiss,
+                        modifier = Modifier.height(36.dp)
                     ) {
                         Text("✕", fontSize = 15.sp, color = PulseSubtext)
                     }
@@ -106,9 +104,9 @@ fun HUDContent(
                     )
                     if (index < symbols.lastIndex) {
                         HorizontalDivider(
-                            color    = PulseDivider,
+                            color     = PulseDivider,
                             thickness = 0.5.dp,
-                            modifier = Modifier.padding(horizontal = 20.dp)
+                            modifier  = Modifier.padding(horizontal = 20.dp)
                         )
                     }
                 }
@@ -126,9 +124,22 @@ private fun connectionDotColor(state: StockStreamManager.ConnectionState): Color
     is StockStreamManager.ConnectionState.Disconnected -> Color.LightGray
 }
 
-private fun connectionLabel(state: StockStreamManager.ConnectionState): String = when (state) {
+private fun connectionLabel(
+    state: StockStreamManager.ConnectionState,
+    lastRefreshMs: Long
+): String = when (state) {
     is StockStreamManager.ConnectionState.Connected    -> "Live"
     is StockStreamManager.ConnectionState.Connecting   -> "Connecting…"
-    is StockStreamManager.ConnectionState.Error        -> "Reconnecting…"
-    is StockStreamManager.ConnectionState.Disconnected -> "Offline"
+    is StockStreamManager.ConnectionState.Error        -> staleLabel(lastRefreshMs) ?: "Reconnecting…"
+    is StockStreamManager.ConnectionState.Disconnected -> staleLabel(lastRefreshMs) ?: "Offline"
+}
+
+private fun staleLabel(lastRefreshMs: Long): String? {
+    if (lastRefreshMs == 0L) return null
+    val ageMin = (System.currentTimeMillis() - lastRefreshMs) / 60_000
+    return when {
+        ageMin < 1  -> "< 1 min ago"
+        ageMin < 60 -> "~${ageMin}m ago"
+        else        -> "~${ageMin / 60}h ago"
+    }
 }
