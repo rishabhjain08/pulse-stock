@@ -245,9 +245,10 @@ class PulseHUDService : Service() {
             private var downY           = 0f
             private var downParamX      = 0
             private var downParamY      = 0
-            private var isDragging      = false
-            private var isLongPress     = false
-            private var wasOverTrash    = false
+            private var isDragging        = false
+            private var isLongPress       = false
+            private var wasOverTrash      = false
+            private var popupWasOpen      = false
             private var snapAnim: SpringAnimation? = null
 
             private val longPressRunnable = Runnable {
@@ -288,9 +289,10 @@ class PulseHUDService : Service() {
                         downY        = event.rawY
                         downParamX   = p.x
                         downParamY   = p.y
-                        isDragging   = false
-                        isLongPress  = false
-                        wasOverTrash = false
+                        isDragging    = false
+                        isLongPress   = false
+                        wasOverTrash  = false
+                        popupWasOpen  = popupView != null
                         bubblePressed.value = true
                         snapAnim?.cancel()
                         translationX = 0f
@@ -331,9 +333,9 @@ class PulseHUDService : Service() {
                         isDragging   = false
                         isLongPress  = false
                         when {
-                            dismissNow   -> Handler(Looper.getMainLooper()).post { hideBubble() }
-                            wasDragging  -> snapToEdge()
-                            !wasLongPress -> togglePopup()
+                            dismissNow    -> Handler(Looper.getMainLooper()).post { hideBubble() }
+                            wasDragging   -> snapToEdge()
+                            !wasLongPress -> if (popupWasOpen) hidePopup() else showPopup()
                         }
                         return true
                     }
@@ -419,9 +421,9 @@ class PulseHUDService : Service() {
             LayoutParams.MATCH_PARENT,
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
-            // No FLAG_WATCH_OUTSIDE_TOUCH: that caused a race where ACTION_OUTSIDE
-            // closed the popup, then ACTION_UP on the bubble immediately re-opened it.
-            LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            LayoutParams.FLAG_NOT_FOCUSABLE
+                    or LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
@@ -503,6 +505,7 @@ class PulseHUDService : Service() {
                             return true
                         }
                     }
+                    MotionEvent.ACTION_OUTSIDE -> { hidePopup(); return true }
                 }
                 return super.onTouchEvent(event)
             }
