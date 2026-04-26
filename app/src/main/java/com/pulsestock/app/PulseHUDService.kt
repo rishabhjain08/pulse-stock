@@ -182,7 +182,6 @@ class PulseHUDService : Service() {
         // Self-stop: if bubbleRunning drops to false the service cleans up.
         serviceScope.launch {
             bubbleRunning
-                .distinctUntilChanged()
                 .collect { running -> if (!running) maybeStopService() }
         }
     }
