@@ -39,7 +39,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -154,7 +153,6 @@ class PulseHUDService : Service() {
                 // so prices are never too stale when the popup opens next time.
                 var wasStreaming = false
                 popupVisible
-                    .distinctUntilChanged()
                     .collectLatest { popupOpen ->
                         if (popupOpen) {
                             wasStreaming = true
