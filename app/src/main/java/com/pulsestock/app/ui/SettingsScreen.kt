@@ -122,7 +122,8 @@ fun SettingsScreen() {
 
     val tileRunning   by PulseHUDService.tileRunning.collectAsState()
     val bubbleRunning by PulseHUDService.bubbleRunning.collectAsState()
-    val isAnyLive = tileRunning || bubbleRunning
+    val isStreaming   by PulseHUDService.isStreaming.collectAsState()
+    val lastRefreshMs by PulseHUDService.lastRefreshMs.collectAsState()
 
     // ── Permissions ──────────────────────────────────────────────────────────
     var hasOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -289,7 +290,12 @@ fun SettingsScreen() {
             // ── Live status strip ──────────────────────────────────────────
             item(key = "status") {
                 Spacer(Modifier.height(if (!hasOverlay || !hasNotif) 10.dp else 4.dp))
-                LiveStatusStrip(isAnyLive = isAnyLive, tileOn = tileRunning, bubbleOn = bubbleRunning)
+                LiveStatusStrip(
+                    tileOn        = tileRunning,
+                    bubbleOn      = bubbleRunning,
+                    isStreaming   = isStreaming,
+                    lastRefreshMs = lastRefreshMs
+                )
                 Spacer(Modifier.height(14.dp))
             }
 
@@ -546,26 +552,113 @@ fun SettingsScreen() {
 
 // ── Composables ───────────────────────────────────────────────────────────────
 
+private enum class ComponentState {
+    Off, Polling, Streaming, BatteryNone, BatteryLow, BatteryModerate
+}
+
 @Composable
-private fun LiveStatusStrip(isAnyLive: Boolean, tileOn: Boolean, bubbleOn: Boolean) {
-    val bg   = if (isAnyLive) LiveSurface else OffSurface
-    val dot  = if (isAnyLive) LiveGreen   else Color.LightGray
-    val text = when {
-        tileOn && bubbleOn -> "Live · tile + bubble active · using battery"
-        tileOn             -> "Live · tile active · using battery"
-        bubbleOn           -> "Live · bubble active · using battery"
-        else               -> "Stopped · no background activity · no battery drain"
+private fun LiveStatusStrip(
+    tileOn: Boolean,
+    bubbleOn: Boolean,
+    isStreaming: Boolean,
+    lastRefreshMs: Long
+) {
+    val isAnyLive = tileOn || bubbleOn
+
+    // Live ticker: how many seconds since the last REST poll completed.
+    var secsAgo by remember { mutableStateOf(-1L) }
+    LaunchedEffect(lastRefreshMs) {
+        if (lastRefreshMs == 0L) { secsAgo = -1L; return@LaunchedEffect }
+        while (true) {
+            secsAgo = (System.currentTimeMillis() - lastRefreshMs) / 1000
+            delay(1_000)
+        }
+    }
+
+    val refreshLabel = when {
+        isStreaming         -> null                           // not relevant during streaming
+        secsAgo < 0        -> "waiting…"
+        secsAgo < 60       -> "${secsAgo}s ago"
+        else               -> "${secsAgo / 60}m ${secsAgo % 60}s ago"
+    }
+
+    Card(
+        modifier  = Modifier.fillMaxWidth(),
+        shape     = RoundedCornerShape(12.dp),
+        colors    = CardDefaults.cardColors(containerColor = OffSurface),
+        elevation = CardDefaults.cardElevation(0.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Text("Service Status",
+                fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = PulseSubtext)
+            Spacer(Modifier.height(10.dp))
+            StatusRow(
+                label = "QS Tile",
+                state = when {
+                    !tileOn     -> ComponentState.Off
+                    isStreaming -> ComponentState.Streaming
+                    else        -> ComponentState.Polling
+                },
+                extra = if (!tileOn || isStreaming) null else refreshLabel
+            )
+            Spacer(Modifier.height(6.dp))
+            StatusRow(
+                label = "Bubble",
+                state = when {
+                    !bubbleOn   -> ComponentState.Off
+                    isStreaming -> ComponentState.Streaming
+                    else        -> ComponentState.Polling
+                },
+                extra = if (!bubbleOn || isStreaming) null else refreshLabel
+            )
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color     = PulseSubtext.copy(alpha = 0.15f),
+                modifier  = Modifier.padding(vertical = 10.dp)
+            )
+            StatusRow(
+                label = "Battery",
+                state = when {
+                    !isAnyLive  -> ComponentState.BatteryNone
+                    isStreaming -> ComponentState.BatteryModerate
+                    else        -> ComponentState.BatteryLow
+                },
+                extra = null
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusRow(label: String, state: ComponentState, extra: String?) {
+    val (badgeText, textColor, bgColor) = when (state) {
+        ComponentState.Off             -> Triple("Off",        PulseSubtext, Color(0xFFE5E7EB))
+        ComponentState.Polling         -> Triple("Polling",    WarnAmber,    WarnSurface)
+        ComponentState.Streaming       -> Triple("Streaming",  LiveGreen,    LiveSurface)
+        ComponentState.BatteryNone     -> Triple("None",       PulseSubtext, Color(0xFFE5E7EB))
+        ComponentState.BatteryLow      -> Triple("Low",        LiveGreen,    LiveSurface)
+        ComponentState.BatteryModerate -> Triple("Moderate",   WarnAmber,    WarnSurface)
     }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg, RoundedCornerShape(10.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier              = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment     = Alignment.CenterVertically
     ) {
-        Box(modifier = Modifier.size(8.dp).background(dot, CircleShape))
-        Spacer(Modifier.width(10.dp))
-        Text(text, fontSize = 12.sp, color = if (isAnyLive) LiveGreen else PulseSubtext)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 13.sp, color = PulseText)
+            if (extra != null) {
+                Text(" · $extra", fontSize = 11.sp, color = PulseSubtext)
+            }
+        }
+        Text(
+            badgeText,
+            fontSize   = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color      = textColor,
+            modifier   = Modifier
+                .background(bgColor, RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+        )
     }
 }
 

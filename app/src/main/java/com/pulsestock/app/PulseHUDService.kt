@@ -67,6 +67,12 @@ class PulseHUDService : Service() {
         /** Set by PulseTileService when the QS panel is open/closed. */
         val tileVisible   = MutableStateFlow(false)
 
+        /** True while the service is connected via WebSocket (real-time mode). */
+        val isStreaming   = MutableStateFlow(false)
+
+        /** Epoch-ms of the last completed REST poll; 0 = never polled this session. */
+        val lastRefreshMs = MutableStateFlow(0L)
+
         val isRunning    get() = tileRunning.value || bubbleRunning.value
         val runningState get() = tileRunning
     }
@@ -185,9 +191,11 @@ class PulseHUDService : Service() {
                     .collectLatest { shouldStream ->
                         if (shouldStream) {
                             wasStreaming = true
+                            isStreaming.value = true
                             streamManager.stopPolling()
                             streamManager.startStreaming(symbols, serviceScope)
                         } else {
+                            isStreaming.value = false
                             // Only linger on WebSocket if we were actively streaming before.
                             // On cold start (tile just enabled, panel closed) poll immediately
                             // so prices appear in seconds, not after a 60 s blank screen.
@@ -213,6 +221,12 @@ class PulseHUDService : Service() {
             }
         }
 
+        // Forward the stream manager's REST poll timestamp to the companion so the UI can show
+        // how long ago the last 60s refresh happened.
+        serviceScope.launch {
+            streamManager.lastRestRefreshMs.collect { ms -> lastRefreshMs.value = ms }
+        }
+
         // Self-stop: if both flags drop to false (e.g. tile removed by Samsung without reliable
         // intent delivery) the service stops itself rather than leaking in the background.
         serviceScope.launch {
@@ -224,6 +238,8 @@ class PulseHUDService : Service() {
 
     private fun maybeStopService() {
         if (!tileRunning.value && !bubbleRunning.value) {
+            isStreaming.value   = false
+            lastRefreshMs.value = 0L
             symbolsJob?.cancel()
             symbolsJob = null
             streamManager.stopAll()

@@ -66,6 +66,10 @@ class StockStreamManager {
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
+    private val _lastRestRefreshMs = MutableStateFlow(0L)
+    /** Epoch-ms timestamp of the most recent completed REST poll. 0 = never polled. */
+    val lastRestRefreshMs: StateFlow<Long> = _lastRestRefreshMs.asStateFlow()
+
     private val prices    = mutableMapOf<String, Double>()
     private val baselines = mutableMapOf<String, Double>()
 
@@ -217,6 +221,7 @@ class StockStreamManager {
                 baselines[sym] = if (q.prevClose > 0.0) q.prevClose else q.current
             }
             if (prices.isNotEmpty()) {
+                _lastRestRefreshMs.value = System.currentTimeMillis()
                 _snapshot.emit(PriceSnapshot(prices.toMap(), baselines.toMap()))
             }
         } catch (e: CancellationException) {
