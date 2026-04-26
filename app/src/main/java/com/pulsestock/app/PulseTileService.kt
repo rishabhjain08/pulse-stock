@@ -6,6 +6,12 @@ import android.os.Build
 import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Quick Settings tile for PulseStock.
@@ -18,11 +24,18 @@ import android.service.quicksettings.TileService
  */
 class PulseTileService : TileService() {
 
+    private val tileScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    private var stateObserver: Job? = null
+
     override fun onStartListening() {
         super.onStartListening()
-        // Panel is open — if tile is active, PulseHUDService will switch to WebSocket.
         PulseHUDService.tileVisible.value = true
         refreshTile()
+        // Keep tile visual in sync while the QS panel is open — handles the case where
+        // the notification Stop button (or any external actor) changes tileRunning.
+        stateObserver = tileScope.launch {
+            PulseHUDService.tileRunning.collect { refreshTile() }
+        }
     }
 
     override fun onClick() {
@@ -57,8 +70,14 @@ class PulseTileService : TileService() {
 
     override fun onStopListening() {
         super.onStopListening()
-        // Panel closed — service drops back to 60s REST poll.
         PulseHUDService.tileVisible.value = false
+        stateObserver?.cancel()
+        stateObserver = null
+    }
+
+    override fun onDestroy() {
+        tileScope.cancel()
+        super.onDestroy()
     }
 
     override fun onTileRemoved() {
