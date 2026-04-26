@@ -1,6 +1,7 @@
 package com.pulsestock.app.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -11,6 +12,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,22 +32,77 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pulsestock.app.ui.theme.PulseGreen
 
 @Composable
-fun FloatingIconContent() {
+fun FloatingIconContent(isPressed: Boolean = false) {
+    // Subtle idle breathing — draws the eye without being distracting
+    val infiniteTransition = rememberInfiniteTransition(label = "breathe")
+    val breatheScale by infiniteTransition.animateFloat(
+        initialValue  = 1f,
+        targetValue   = 1.045f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathe_scale"
+    )
+
+    // Press: snap down fast (stiff spring, no bounce), release: bouncy overshoot
+    val pressScale by animateFloatAsState(
+        targetValue   = if (isPressed) 0.87f else 1f,
+        animationSpec = if (isPressed)
+            spring(stiffness = Spring.StiffnessHigh, dampingRatio = Spring.DampingRatioNoBouncy)
+        else
+            spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioLowBouncy),
+        label = "press_scale"
+    )
+
+    // Shadow squishes down on press (tactile depth cue), bounces back on release
+    val elevation by animateDpAsState(
+        targetValue   = if (isPressed) 2.dp else 12.dp,
+        animationSpec = if (isPressed)
+            tween(55)
+        else
+            spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioLowBouncy),
+        label = "elevation"
+    )
+
+    // Suppress breathing while pressed so the two animations don't fight
+    val finalScale = if (isPressed) pressScale else breatheScale * pressScale
+
+    val gradient = Brush.linearGradient(
+        colors = listOf(Color(0xFF52FF7A), Color(0xFF00A040)),
+        start  = Offset(0f, 0f),
+        end    = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+    )
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(56.dp)
-            .shadow(elevation = 8.dp, shape = CircleShape, clip = false)
-            .background(PulseGreen, CircleShape)
+            .scale(finalScale)
+            .shadow(
+                elevation    = elevation,
+                shape        = CircleShape,
+                clip         = false,
+                ambientColor = PulseGreen.copy(alpha = 0.45f),
+                spotColor    = PulseGreen.copy(alpha = 0.65f)
+            )
+            .clip(CircleShape)
+            .background(brush = gradient)
     ) {
         Icon(
             imageVector        = Icons.Default.ShowChart,
@@ -53,6 +110,18 @@ fun FloatingIconContent() {
             tint               = Color.White,
             modifier           = Modifier.size(28.dp)
         )
+        // Glass specular arc — the key detail that makes a flat circle feel like a 3D bubble
+        Canvas(modifier = Modifier.matchParentSize()) {
+            drawArc(
+                color      = Color.White.copy(alpha = 0.30f),
+                startAngle = -155f,
+                sweepAngle = 120f,
+                useCenter  = false,
+                topLeft    = Offset(size.width * 0.20f, size.height * 0.09f),
+                size       = Size(size.width * 0.62f, size.height * 0.50f),
+                style      = Stroke(width = size.width * 0.10f, cap = StrokeCap.Round)
+            )
+        }
     }
 }
 
@@ -84,7 +153,6 @@ fun TrashZoneContent(isHovered: Boolean = false) {
         label         = "ring_scale"
     )
 
-    // Pulse ring animation when hovered
     val pulse = rememberInfiniteTransition(label = "pulse")
     val pulseAlpha by pulse.animateFloat(
         initialValue  = 0.55f,
@@ -110,12 +178,10 @@ fun TrashZoneContent(isHovered: Boolean = false) {
         contentAlignment = Alignment.BottomCenter
     ) {
         Column(
-            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier            = Modifier.padding(bottom = 20.dp)
         ) {
-            // Circle + pulse ring stacked
             Box(contentAlignment = Alignment.Center) {
-                // Pulsing ring (only when hovered)
                 if (isHovered) {
                     Spacer(
                         Modifier
@@ -125,7 +191,6 @@ fun TrashZoneContent(isHovered: Boolean = false) {
                     )
                 }
 
-                // Main circle
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier         = Modifier
@@ -148,7 +213,6 @@ fun TrashZoneContent(isHovered: Boolean = false) {
                 }
             }
 
-            // "Release to dismiss" label fades in below the circle
             Spacer(Modifier.height(8.dp))
             Text(
                 text       = "Release to dismiss",

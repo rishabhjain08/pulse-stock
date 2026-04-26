@@ -83,6 +83,9 @@ class PulseHUDService : Service() {
     /** True while the bubble is being dragged over the trash zone. */
     private val trashHovered = MutableStateFlow(false)
 
+    /** True while a finger is down on the bubble (press or drag). */
+    private val bubblePressed = MutableStateFlow(false)
+
     // ── Service lifecycle ────────────────────────────────────────────────────
 
     override fun onCreate() {
@@ -236,6 +239,7 @@ class PulseHUDService : Service() {
             private var isDragging      = false
             private var isLongPress     = false
             private var wasOverTrash    = false
+            private var snapAnimator: android.animation.ValueAnimator? = null
 
             private val longPressRunnable = Runnable {
                 isLongPress = true
@@ -243,6 +247,24 @@ class PulseHUDService : Service() {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
                 startActivity(appIntent)
+            }
+
+            private fun snapToEdge() {
+                val p = floatingIconParams ?: return
+                val margin = (14 * density).toInt()
+                val targetX = if (p.x + width / 2 < screenWidth / 2) margin
+                              else screenWidth - width - margin
+                snapAnimator?.cancel()
+                val self = this
+                snapAnimator = android.animation.ValueAnimator.ofInt(p.x, targetX).apply {
+                    duration = 300
+                    interpolator = android.view.animation.OvershootInterpolator(0.8f)
+                    addUpdateListener { anim ->
+                        p.x = anim.animatedValue as Int
+                        if (self.isAttachedToWindow) windowManager.updateViewLayout(self, p)
+                    }
+                    start()
+                }
             }
 
             override fun onInterceptTouchEvent(ev: MotionEvent) = true
@@ -258,6 +280,8 @@ class PulseHUDService : Service() {
                         isDragging   = false
                         isLongPress  = false
                         wasOverTrash = false
+                        bubblePressed.value = true
+                        snapAnimator?.cancel()
                         longPressHandler.postDelayed(longPressRunnable, 600L)
                         return true
                     }
@@ -270,8 +294,8 @@ class PulseHUDService : Service() {
                             showTrashOverlay()
                         }
                         if (isDragging) {
-                            p.x = downParamX + dx.toInt()
-                            p.y = downParamY + dy.toInt()
+                            p.x = (downParamX + dx.toInt()).coerceIn(0, screenWidth - width)
+                            p.y = (downParamY + dy.toInt()).coerceIn(0, screenHeight - height)
                             if (floatingIcon?.isAttachedToWindow == true) {
                                 windowManager.updateViewLayout(this, p)
                             }
@@ -286,19 +310,19 @@ class PulseHUDService : Service() {
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         longPressHandler.removeCallbacks(longPressRunnable)
-                        val dismissNow = isDragging && wasOverTrash
+                        bubblePressed.value = false
+                        val dismissNow   = isDragging && wasOverTrash
+                        val wasDragging  = isDragging
+                        val wasLongPress = isLongPress
                         hideTrashOverlay()
                         wasOverTrash = false
-                        if (dismissNow) {
-                            isDragging  = false
-                            isLongPress = false
-                            Handler(Looper.getMainLooper()).post { hideBubble() }
-                            return true
-                        } else if (!isDragging && !isLongPress) {
-                            togglePopup()
+                        isDragging   = false
+                        isLongPress  = false
+                        when {
+                            dismissNow   -> Handler(Looper.getMainLooper()).post { hideBubble() }
+                            wasDragging  -> snapToEdge()
+                            !wasLongPress -> togglePopup()
                         }
-                        isDragging  = false
-                        isLongPress = false
                         return true
                     }
                 }
@@ -312,7 +336,8 @@ class PulseHUDService : Service() {
 
         val composeView = ComposeView(this).apply {
             setContent {
-                PulseStockTheme { FloatingIconContent() }
+                val isPressed by bubblePressed.collectAsState()
+                PulseStockTheme { FloatingIconContent(isPressed = isPressed) }
             }
         }
         wrapper.addView(composeView)
@@ -321,6 +346,7 @@ class PulseHUDService : Service() {
     }
 
     private fun removeFloatingIcon() {
+        bubblePressed.value = false
         floatingIcon?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         floatingIcon       = null
         floatingIconParams = null
