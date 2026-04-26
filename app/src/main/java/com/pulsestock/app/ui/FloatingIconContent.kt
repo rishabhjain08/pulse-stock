@@ -18,16 +18,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -41,9 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.pulsestock.app.ui.theme.PulseGreen
 
 @Composable
@@ -89,6 +84,12 @@ fun FloatingIconContent(isPressed: Boolean = false) {
         end    = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
     )
 
+    // Outer box is larger than the circle so shadow and scale-up don't get clipped
+    // by the FrameLayout bounds (scale() affects drawing, not layout size).
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(70.dp)
+    ) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -122,7 +123,8 @@ fun FloatingIconContent(isPressed: Boolean = false) {
                 style      = Stroke(width = size.width * 0.10f, cap = StrokeCap.Round)
             )
         }
-    }
+    } // inner 56dp circle
+    } // outer 70dp layout box
 }
 
 @Composable
@@ -141,11 +143,6 @@ fun TrashZoneContent(isHovered: Boolean = false) {
         targetValue   = if (isHovered) Color(0xFFFF3B30) else Color(0xFF2C2C2E),
         animationSpec = tween(durationMillis = 160),
         label         = "trash_color"
-    )
-    val labelAlpha by animateFloatAsState(
-        targetValue   = if (isHovered) 1f else 0f,
-        animationSpec = tween(durationMillis = 180),
-        label         = "label_alpha"
     )
     val ringScale by animateFloatAsState(
         targetValue   = if (isHovered) 1f else 0f,
@@ -213,16 +210,6 @@ fun TrashZoneContent(isHovered: Boolean = false) {
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text       = "Release to dismiss",
-                color      = Color.White.copy(alpha = labelAlpha),
-                fontSize   = 12.sp,
-                fontWeight = FontWeight.Medium,
-                modifier   = Modifier
-                    .background(Color(0x99000000), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            )
         }
     }
 }
