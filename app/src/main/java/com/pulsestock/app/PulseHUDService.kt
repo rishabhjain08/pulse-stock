@@ -27,7 +27,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import androidx.dynamicanimation.animation.FloatPropertyCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import com.pulsestock.app.data.StockPreferences
@@ -264,21 +264,16 @@ class PulseHUDService : Service() {
                 val targetX = if (p.x + width / 2 < screenWidth / 2) margin
                               else screenWidth - width - margin
                 snapAnim?.cancel()
-                val self = this
-                snapAnim = SpringAnimation(
-                    p,
-                    object : FloatPropertyCompat<LayoutParams>("x") {
-                        override fun getValue(lp: LayoutParams) = lp.x.toFloat()
-                        override fun setValue(lp: LayoutParams, value: Float) {
-                            lp.x = value.toInt()
-                            if (self.isAttachedToWindow) windowManager.updateViewLayout(self, lp)
-                        }
-                    },
-                    targetX.toFloat()
-                ).apply {
+                // Teleport the window to targetX immediately, then offset the View's own
+                // translationX so it visually stays put. Spring translationX → 0 gives the
+                // bounce, avoiding FloatPropertyCompat generic inference issues.
+                val startOffset = (p.x - targetX).toFloat()
+                p.x = targetX
+                if (isAttachedToWindow) windowManager.updateViewLayout(this, p)
+                translationX = startOffset
+                snapAnim = SpringAnimation(this, DynamicAnimation.TRANSLATION_X, 0f).apply {
                     spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
                     spring.stiffness    = SpringForce.STIFFNESS_MEDIUM
-                    setStartValue(p.x.toFloat())
                     start()
                 }
             }
@@ -298,6 +293,7 @@ class PulseHUDService : Service() {
                         wasOverTrash = false
                         bubblePressed.value = true
                         snapAnim?.cancel()
+                        translationX = 0f
                         longPressHandler.postDelayed(longPressRunnable, 600L)
                         return true
                     }
