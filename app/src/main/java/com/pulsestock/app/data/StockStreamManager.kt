@@ -18,6 +18,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -130,48 +131,50 @@ class StockStreamManager {
 
     // ── Single-symbol quote (used for add-stock validation) ─────────────────
 
-    suspend fun fetchQuote(fullSymbol: String): QuoteResponse? = try {
-        val ticker = finnhubTicker(fullSymbol)
-        val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
-        val body   = restClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-            if (!resp.isSuccessful) return null   // rate-limit (429), auth error (401), etc.
-            resp.body?.string()
-        } ?: return null
-        json.decodeFromString<QuoteResponse>(body)
-    } catch (e: Exception) {
-        null
+    suspend fun fetchQuote(fullSymbol: String): QuoteResponse? = withContext(Dispatchers.IO) {
+        try {
+            val ticker = finnhubTicker(fullSymbol)
+            val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
+            val body   = restClient.newCall(Request.Builder().url(url).build()).execute()
+                .use { resp -> if (!resp.isSuccessful) null else resp.body?.string() }
+                ?: return@withContext null
+            json.decodeFromString<QuoteResponse>(body)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     // ── Symbol search (Yahoo Finance — free, no key, substring matching) ────────
 
     suspend fun searchSymbols(query: String): List<StockSuggestion> {
         if (query.isBlank()) return emptyList()
-        return try {
-            val q    = java.net.URLEncoder.encode(query, "UTF-8")
-            val url  = "https://query1.finance.yahoo.com/v1/finance/search" +
-                       "?q=$q&quotesCount=10&newsCount=0&listsCount=0"
-            val body = restClient.newCall(
-                Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            ).execute().use { resp ->
-                if (!resp.isSuccessful) return emptyList()
-                resp.body?.string()
-            } ?: return emptyList()
-            json.decodeFromString<YahooSearchResponse>(body)
-                .quotes
-                .filter { it.quoteType == "EQUITY" || it.quoteType == "ETF" }
-                .mapNotNull { q ->
-                    val exchange = yahooExchangeToPrefix(q.exchDisp) ?: return@mapNotNull null
-                    StockSuggestion(
-                        fullSymbol = "$exchange:${q.symbol}",
-                        ticker     = q.symbol,
-                        name       = q.shortname.ifBlank { q.longname },
-                        exchange   = exchange
-                    )
-                }
-                .take(8)
-        } catch (e: Exception) {
-            Log.w(TAG, "Symbol search error: ${e.message}")
-            emptyList()
+        return withContext(Dispatchers.IO) {
+            try {
+                val q    = java.net.URLEncoder.encode(query, "UTF-8")
+                val url  = "https://query1.finance.yahoo.com/v1/finance/search" +
+                           "?q=$q&quotesCount=10&newsCount=0&listsCount=0"
+                val body = restClient.newCall(
+                    Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+                ).execute().use { resp ->
+                    if (!resp.isSuccessful) null else resp.body?.string()
+                } ?: return@withContext emptyList()
+                json.decodeFromString<YahooSearchResponse>(body)
+                    .quotes
+                    .filter { it.quoteType == "EQUITY" || it.quoteType == "ETF" }
+                    .mapNotNull { q ->
+                        val exchange = yahooExchangeToPrefix(q.exchDisp) ?: return@mapNotNull null
+                        StockSuggestion(
+                            fullSymbol = "$exchange:${q.symbol}",
+                            ticker     = q.symbol,
+                            name       = q.shortname.ifBlank { q.longname },
+                            exchange   = exchange
+                        )
+                    }
+                    .take(8)
+            } catch (e: Exception) {
+                Log.w(TAG, "Symbol search error: ${e.message}")
+                emptyList()
+            }
         }
     }
 
