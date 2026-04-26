@@ -492,7 +492,7 @@ class PulseHUDService : Service() {
         builder.addAction(Notification.Action.Builder(
             null, "Stop",
             PendingIntent.getService(this, 1,
-                Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP),
+                Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP_TILE),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         ).build())
 
