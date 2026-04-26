@@ -16,11 +16,8 @@ import kotlinx.coroutines.launch
 /**
  * Quick Settings tile for PulseStock.
  *
- * - Tap:       toggle live prices on/off in the tile (independent of the bubble)
- * - Long press: open the PulseStock app
- *
- * The tile and bubble are fully independent — both are backed by the same
- * live data stream but can be started and stopped separately from the app.
+ * Tap: show or hide the floating price bubble.
+ * Long press: open the PulseStock app (via QS_TILE_PREFERENCES intent filter in manifest).
  */
 class PulseTileService : TileService() {
 
@@ -29,12 +26,9 @@ class PulseTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
-        PulseHUDService.tileVisible.value = true
         refreshTile()
-        // Keep tile visual in sync while the QS panel is open — handles the case where
-        // the notification Stop button (or any external actor) changes tileRunning.
         stateObserver = tileScope.launch {
-            PulseHUDService.tileRunning.collect { refreshTile() }
+            PulseHUDService.bubbleRunning.collect { refreshTile() }
         }
     }
 
@@ -42,7 +36,6 @@ class PulseTileService : TileService() {
         super.onClick()
 
         if (!Settings.canDrawOverlays(this)) {
-            // Need overlay permission before any UI can show — send user to settings.
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -59,10 +52,10 @@ class PulseTileService : TileService() {
             return
         }
 
-        if (PulseHUDService.tileRunning.value) {
-            sendAction(PulseHUDService.ACTION_STOP_TILE)
+        if (PulseHUDService.bubbleRunning.value) {
+            sendAction(PulseHUDService.ACTION_STOP)
         } else {
-            sendForegroundAction(PulseHUDService.ACTION_START_TILE)
+            sendForegroundAction(PulseHUDService.ACTION_SHOW_BUBBLE)
         }
 
         refreshTile()
@@ -70,7 +63,6 @@ class PulseTileService : TileService() {
 
     override fun onStopListening() {
         super.onStopListening()
-        PulseHUDService.tileVisible.value = false
         stateObserver?.cancel()
         stateObserver = null
     }
@@ -82,20 +74,17 @@ class PulseTileService : TileService() {
 
     override fun onTileRemoved() {
         super.onTileRemoved()
-        // Directly update in-memory state so the app toggle is immediately correct even if
-        // Samsung doesn't reliably deliver the startService intent before the tile process ends.
-        PulseHUDService.tileVisible.value = false
-        PulseHUDService.tileRunning.value = false
-        sendAction(PulseHUDService.ACTION_STOP_TILE)
+        PulseHUDService.bubbleRunning.value = false
+        sendAction(PulseHUDService.ACTION_STOP)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun refreshTile() {
         val tile = qsTile ?: return
-        if (PulseHUDService.tileRunning.value) {
+        if (PulseHUDService.bubbleRunning.value) {
             tile.state    = Tile.STATE_ACTIVE
-            tile.subtitle = "Live prices on"
+            tile.subtitle = "Bubble on"
         } else {
             tile.state    = Tile.STATE_INACTIVE
             tile.subtitle = "Tap to enable"

@@ -120,7 +120,6 @@ fun SettingsScreen() {
     val keyboard = LocalSoftwareKeyboardController.current
     val stream   = remember { StockStreamManager() }
 
-    val tileRunning   by PulseHUDService.tileRunning.collectAsState()
     val bubbleRunning by PulseHUDService.bubbleRunning.collectAsState()
     val isStreaming   by PulseHUDService.isStreaming.collectAsState()
     val lastRefreshMs by PulseHUDService.lastRefreshMs.collectAsState()
@@ -261,7 +260,7 @@ fun SettingsScreen() {
                 item(key = "notif_alert") {
                     PermissionAlert(
                         icon        = Icons.Default.NotificationsOff,
-                        text        = "Allow notifications so the live price chip shows in your status bar",
+                        text        = "Allow notifications so the bubble service can run in the background",
                         actionLabel = "Allow",
                         onClick     = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
                     )
@@ -291,28 +290,11 @@ fun SettingsScreen() {
             item(key = "status") {
                 Spacer(Modifier.height(if (!hasOverlay || !hasNotif) 10.dp else 4.dp))
                 LiveStatusStrip(
-                    tileOn        = tileRunning,
                     bubbleOn      = bubbleRunning,
                     isStreaming   = isStreaming,
                     lastRefreshMs = lastRefreshMs
                 )
                 Spacer(Modifier.height(14.dp))
-            }
-
-            // ── Tile control ───────────────────────────────────────────────
-            item(key = "tile_control") {
-                ControlCard(
-                    label       = "Quick Settings Tile",
-                    description = "Shows live prices in your notification panel tile.",
-                    isOn        = tileRunning,
-                    enabled     = true,
-                    onToggle    = { on ->
-                        val action = if (on) PulseHUDService.ACTION_START_TILE else PulseHUDService.ACTION_STOP_TILE
-                        val intent = Intent(context, PulseHUDService::class.java).setAction(action)
-                        if (on) context.startForegroundService(intent) else context.startService(intent)
-                    }
-                )
-                Spacer(Modifier.height(10.dp))
             }
 
             // ── Bubble control ─────────────────────────────────────────────
@@ -525,11 +507,12 @@ fun SettingsScreen() {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text("How to use", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PulseText)
                         Spacer(Modifier.height(8.dp))
-                        HowToStep("1", "Turn on the Tile or Bubble using the toggles above")
-                        HowToStep("2", "Tile: add PulseStock to your notification panel for always-visible prices")
-                        HowToStep("3", "Tile: tap to toggle prices on/off · long-press tile → tap settings gear to open this app")
-                        HowToStep("4", "Bubble: tap the floating icon to show/hide live prices")
-                        HowToStep("5", "Bubble: drag to move · drag to red trash circle to hide · hold to open this app")
+                        HowToStep("1", "Turn on the bubble using the toggle above")
+                        HowToStep("2", "Tap the floating bubble to show or hide live prices")
+                        HowToStep("3", "Drag the bubble to reposition it anywhere on screen")
+                        HowToStep("4", "Drag the bubble to the trash circle at the bottom to hide it")
+                        HowToStep("5", "Hold the bubble for 1 second to open this app")
+                        HowToStep("6", "Add PulseStock to Quick Settings — tap the tile to toggle the bubble on/off from anywhere")
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -553,19 +536,15 @@ fun SettingsScreen() {
 // ── Composables ───────────────────────────────────────────────────────────────
 
 private enum class ComponentState {
-    Off, Polling, Streaming, BatteryNone, BatteryLow, BatteryModerate
+    Off, Idle, Streaming, BatteryNone, BatteryLow, BatteryModerate
 }
 
 @Composable
 private fun LiveStatusStrip(
-    tileOn: Boolean,
     bubbleOn: Boolean,
     isStreaming: Boolean,
     lastRefreshMs: Long
 ) {
-    val isAnyLive = tileOn || bubbleOn
-
-    // Live ticker: how many seconds since the last REST poll completed.
     var secsAgo by remember { mutableStateOf(-1L) }
     LaunchedEffect(lastRefreshMs) {
         if (lastRefreshMs == 0L) { secsAgo = -1L; return@LaunchedEffect }
@@ -576,10 +555,10 @@ private fun LiveStatusStrip(
     }
 
     val refreshLabel = when {
-        isStreaming         -> null                           // not relevant during streaming
-        secsAgo < 0        -> "waiting…"
-        secsAgo < 60       -> "${secsAgo}s ago"
-        else               -> "${secsAgo / 60}m ${secsAgo % 60}s ago"
+        isStreaming  -> null
+        secsAgo < 0  -> "waiting…"
+        secsAgo < 60 -> "${secsAgo}s ago"
+        else         -> "${secsAgo / 60}m ${secsAgo % 60}s ago"
     }
 
     Card(
@@ -593,21 +572,11 @@ private fun LiveStatusStrip(
                 fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = PulseSubtext)
             Spacer(Modifier.height(10.dp))
             StatusRow(
-                label = "QS Tile",
-                state = when {
-                    !tileOn     -> ComponentState.Off
-                    isStreaming -> ComponentState.Streaming
-                    else        -> ComponentState.Polling
-                },
-                extra = if (!tileOn || isStreaming) null else refreshLabel
-            )
-            Spacer(Modifier.height(6.dp))
-            StatusRow(
                 label = "Bubble",
                 state = when {
                     !bubbleOn   -> ComponentState.Off
                     isStreaming -> ComponentState.Streaming
-                    else        -> ComponentState.Polling
+                    else        -> ComponentState.Idle
                 },
                 extra = if (!bubbleOn || isStreaming) null else refreshLabel
             )
@@ -619,7 +588,7 @@ private fun LiveStatusStrip(
             StatusRow(
                 label = "Battery",
                 state = when {
-                    !isAnyLive  -> ComponentState.BatteryNone
+                    !bubbleOn   -> ComponentState.BatteryNone
                     isStreaming -> ComponentState.BatteryModerate
                     else        -> ComponentState.BatteryLow
                 },
@@ -633,7 +602,7 @@ private fun LiveStatusStrip(
 private fun StatusRow(label: String, state: ComponentState, extra: String?) {
     val (badgeText, textColor, bgColor) = when (state) {
         ComponentState.Off             -> Triple("Off",        PulseSubtext, Color(0xFFE5E7EB))
-        ComponentState.Polling         -> Triple("Polling",    WarnAmber,    WarnSurface)
+        ComponentState.Idle            -> Triple("Idle",       LiveGreen,    LiveSurface)
         ComponentState.Streaming       -> Triple("Streaming",  LiveGreen,    LiveSurface)
         ComponentState.BatteryNone     -> Triple("None",       PulseSubtext, Color(0xFFE5E7EB))
         ComponentState.BatteryLow      -> Triple("Low",        LiveGreen,    LiveSurface)

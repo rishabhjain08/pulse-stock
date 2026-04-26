@@ -21,7 +21,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
-import androidx.annotation.RequiresApi
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
@@ -40,32 +39,22 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
 
 class PulseHUDService : Service() {
 
     companion object {
-        const val ACTION_START_TILE   = "com.pulsestock.ACTION_START_TILE"
-        const val ACTION_STOP_TILE    = "com.pulsestock.ACTION_STOP_TILE"
         const val ACTION_SHOW_BUBBLE  = "com.pulsestock.ACTION_SHOW_BUBBLE"
         const val ACTION_HIDE_BUBBLE  = "com.pulsestock.ACTION_HIDE_BUBBLE"
-
-        // Legacy actions kept for back-compat with PulseTileService
-        const val ACTION_START = "com.pulsestock.ACTION_START"
-        const val ACTION_STOP  = "com.pulsestock.ACTION_STOP"
+        const val ACTION_STOP         = "com.pulsestock.ACTION_STOP"
 
         const val NOTIFICATION_ID = 7001
-        const val CHANNEL_ID      = "pulse_hud_live"
+        const val CHANNEL_ID      = "pulse_bubble"
 
-        val tileRunning   = MutableStateFlow(false)
         val bubbleRunning = MutableStateFlow(false)
-
-        /** Set by PulseTileService when the QS panel is open/closed. */
-        val tileVisible   = MutableStateFlow(false)
 
         /** True while the service is connected via WebSocket (real-time mode). */
         val isStreaming   = MutableStateFlow(false)
@@ -73,8 +62,7 @@ class PulseHUDService : Service() {
         /** Epoch-ms of the last completed REST poll; 0 = never polled this session. */
         val lastRefreshMs = MutableStateFlow(0L)
 
-        val isRunning    get() = tileRunning.value || bubbleRunning.value
-        val runningState get() = tileRunning
+        val isRunning get() = bubbleRunning.value
     }
 
     private val serviceScope   = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -93,6 +81,9 @@ class PulseHUDService : Service() {
     /** True while the price popup is expanded over the screen. */
     private val popupVisible = MutableStateFlow(false)
 
+    /** True while the bubble is being dragged over the trash zone. */
+    private val trashHovered = MutableStateFlow(false)
+
     // ── Service lifecycle ────────────────────────────────────────────────────
 
     override fun onCreate() {
@@ -103,17 +94,13 @@ class PulseHUDService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_TILE, ACTION_START -> startTile()
-            ACTION_STOP_TILE               -> stopTile()
             ACTION_SHOW_BUBBLE             -> showBubble()
-            ACTION_HIDE_BUBBLE             -> hideBubble()
-            ACTION_STOP                    -> { stopTile(); hideBubble() }
+            ACTION_HIDE_BUBBLE, ACTION_STOP -> hideBubble()
         }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        stopTile()
         hideBubble()
         streamManager.close()
         serviceScope.cancel()
@@ -122,21 +109,6 @@ class PulseHUDService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    // ── Tile mode ────────────────────────────────────────────────────────────
-
-    private fun startTile() {
-        if (tileRunning.value) return
-        tileRunning.value = true
-        ensureStreamAndForeground()
-        serviceScope.launch { prefs.setTileActive(true) }
-    }
-
-    private fun stopTile() {
-        tileRunning.value = false
-        serviceScope.launch { prefs.setTileActive(false) }
-        maybeStopService()
-    }
 
     // ── Bubble mode ──────────────────────────────────────────────────────────
 
@@ -158,12 +130,12 @@ class PulseHUDService : Service() {
         maybeStopService()
     }
 
-    // ── Shared stream / foreground ───────────────────────────────────────────
+    // ── Stream / foreground ──────────────────────────────────────────────────
 
     private fun ensureStreamAndForeground() {
         if (symbolsJob != null) return
 
-        val notification = buildNotification("Connecting…")
+        val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -178,27 +150,19 @@ class PulseHUDService : Service() {
             prefs.watchedSymbols.collectLatest { symbols ->
                 currentSymbols = symbols
 
-                // Inner loop: switch between WebSocket and REST polling based on
-                // whether anyone is actively looking at prices.
-                //   shouldStream = popup is open  OR  tile panel is open (and tile is active)
+                // Stream (WebSocket) when popup is open; REST-poll every 60s otherwise
+                // so prices are never too stale when the popup opens next time.
                 var wasStreaming = false
-                combine(
-                    popupVisible,
-                    tileVisible,
-                    tileRunning
-                ) { popup, tile, tileOn -> popup || (tile && tileOn) }
+                popupVisible
                     .distinctUntilChanged()
-                    .collectLatest { shouldStream ->
-                        if (shouldStream) {
+                    .collectLatest { popupOpen ->
+                        if (popupOpen) {
                             wasStreaming = true
                             isStreaming.value = true
                             streamManager.stopPolling()
                             streamManager.startStreaming(symbols, serviceScope)
                         } else {
                             isStreaming.value = false
-                            // Only linger on WebSocket if we were actively streaming before.
-                            // On cold start (tile just enabled, panel closed) poll immediately
-                            // so prices appear in seconds, not after a 60 s blank screen.
                             if (wasStreaming) kotlinx.coroutines.delay(60_000L)
                             wasStreaming = false
                             streamManager.stopStreaming()
@@ -208,36 +172,25 @@ class PulseHUDService : Service() {
             }
         }
 
+        // Haptic tick on each price update while popup is open.
         serviceScope.launch {
-            streamManager.snapshot.collect { snap ->
-                val lines = currentSymbols.take(5).mapNotNull { sym ->
-                    val p = snap.prices[sym] ?: return@mapNotNull null
-                    val b = snap.baselines[sym]
-                    val arrow = if (b == null) "" else if (p >= b) " ↑" else " ↓"
-                    "${tickerOnly(sym)} \$${"%.2f".format(p)}$arrow"
-                }
-                if (lines.isNotEmpty()) updateNotification(lines.joinToString("  ·  "))
-                triggerHapticTick()
-            }
+            streamManager.snapshot.collect { triggerHapticTick() }
         }
 
-        // Forward the stream manager's REST poll timestamp to the companion so the UI can show
-        // how long ago the last 60s refresh happened.
         serviceScope.launch {
             streamManager.lastRestRefreshMs.collect { ms -> lastRefreshMs.value = ms }
         }
 
-        // Self-stop: if both flags drop to false (e.g. tile removed by Samsung without reliable
-        // intent delivery) the service stops itself rather than leaking in the background.
+        // Self-stop: if bubbleRunning drops to false the service cleans up.
         serviceScope.launch {
-            combine(tileRunning, bubbleRunning) { t, b -> t || b }
+            bubbleRunning
                 .distinctUntilChanged()
-                .collect { anyRunning -> if (!anyRunning) maybeStopService() }
+                .collect { running -> if (!running) maybeStopService() }
         }
     }
 
     private fun maybeStopService() {
-        if (!tileRunning.value && !bubbleRunning.value) {
+        if (!bubbleRunning.value) {
             isStreaming.value   = false
             lastRefreshMs.value = 0L
             symbolsJob?.cancel()
@@ -271,7 +224,6 @@ class PulseHUDService : Service() {
         floatingIconParams = params
 
         val screenHeight = resources.displayMetrics.heightPixels
-        // Trash zone: bottom-centre, radius 60dp
         val trashRadiusPx = (60 * density).toInt()
         val trashCentreX  = screenWidth / 2f
         val trashCentreY  = screenHeight - (80 * density)
@@ -285,7 +237,6 @@ class PulseHUDService : Service() {
             private var isDragging = false
             private var isLongPress = false
 
-            // Long press → open app (600 ms)
             private val longPressRunnable = Runnable {
                 isLongPress = true
                 val appIntent = Intent(this@PulseHUDService, MainActivity::class.java).apply {
@@ -323,22 +274,22 @@ class PulseHUDService : Service() {
                             if (floatingIcon?.isAttachedToWindow == true) {
                                 windowManager.updateViewLayout(this, p)
                             }
-                            // Highlight trash zone when bubble hovers over it
                             val iconCentreX = p.x + (width / 2f)
                             val iconCentreY = p.y + (height / 2f)
                             val overTrash = hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx
-                            trashOverlay?.alpha = if (overTrash) 1f else 0.6f
+                            trashHovered.value = overTrash
                         }
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         longPressHandler.removeCallbacks(longPressRunnable)
+                        hideTrashOverlay()
                         if (isDragging) {
-                            hideTrashOverlay()
-                            // Drop on trash → hide bubble, keep market data if tile is active
                             val iconCentreX = p.x + (width / 2f)
                             val iconCentreY = p.y + (height / 2f)
                             if (hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx) {
+                                isDragging  = false
+                                isLongPress = false
                                 hideBubble()
                                 return true
                             }
@@ -369,7 +320,7 @@ class PulseHUDService : Service() {
     }
 
     private fun removeFloatingIcon() {
-        floatingIcon?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
+        floatingIcon?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         floatingIcon       = null
         floatingIconParams = null
         hideTrashOverlay()
@@ -392,9 +343,9 @@ class PulseHUDService : Service() {
         }
 
         val view = ComposeView(this).apply {
-            alpha = 0.6f
             setContent {
-                PulseStockTheme { com.pulsestock.app.ui.TrashZoneContent() }
+                val hovered by trashHovered.collectAsState()
+                PulseStockTheme { com.pulsestock.app.ui.TrashZoneContent(isHovered = hovered) }
             }
         }
 
@@ -410,7 +361,8 @@ class PulseHUDService : Service() {
     }
 
     private fun hideTrashOverlay() {
-        trashOverlay?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
+        trashHovered.value = false
+        trashOverlay?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         trashOverlay = null
     }
 
@@ -473,7 +425,7 @@ class PulseHUDService : Service() {
 
     private fun hidePopup() {
         popupVisible.value = false
-        popupView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
+        popupView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         popupView = null
     }
 
@@ -485,56 +437,40 @@ class PulseHUDService : Service() {
             nm.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    getString(R.string.notification_channel_name),
-                    NotificationManager.IMPORTANCE_LOW
+                    "PulseStock Bubble",
+                    NotificationManager.IMPORTANCE_MIN
                 ).apply {
-                    description = getString(R.string.notification_channel_desc)
+                    description = "Background service notification for the floating price bubble"
                     setShowBadge(false)
                 }
             )
         }
     }
 
-    private fun buildNotification(contentText: String): Notification {
+    private fun buildNotification(): Notification {
         ensureChannel()
 
-        val builder = Notification.Builder(this, CHANNEL_ID)
+        val stopIntent = PendingIntent.getService(
+            this, 1,
+            Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val openIntent = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_pulse_tile)
-            .setContentTitle("PulseStock · Live Prices")
-            .setContentText(contentText)
+            .setContentTitle("PulseStock")
+            .setContentText("Tap the bubble to view prices")
             .setOngoing(true)
-            .setStyle(Notification.BigTextStyle().bigText(contentText))
-
-        builder.addAction(Notification.Action.Builder(
-            null, "Stop",
-            PendingIntent.getService(this, 1,
-                Intent(this, PulseHUDService::class.java).setAction(ACTION_STOP_TILE),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        ).build())
-
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        builder.addAction(Notification.Action.Builder(
-            null, "Open",
-            PendingIntent.getActivity(this, 2, openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        ).build())
-
-        if (Build.VERSION.SDK_INT >= 36) applyNowBarExtras(builder, contentText)
-
-        return builder.build()
-    }
-
-    @RequiresApi(36)
-    private fun applyNowBarExtras(builder: Notification.Builder, text: String) {
-        builder.setShortCriticalText(text)
-        builder.extras.putBoolean("android.requestPromotedOngoing", true)
-    }
-
-    private fun updateNotification(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(text))
+            .addAction(Notification.Action.Builder(null, "Stop", stopIntent).build())
+            .addAction(Notification.Action.Builder(null, "Open", openIntent).build())
+            .build()
     }
 
     // ── Haptics ───────────────────────────────────────────────────────────────
@@ -555,8 +491,4 @@ class PulseHUDService : Service() {
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /** Returns only the ticker part for display (NASDAQ:AAPL → AAPL). */
-    private fun tickerOnly(symbol: String) = symbol.substringAfterLast(':')
 }
