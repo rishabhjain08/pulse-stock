@@ -18,6 +18,7 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
@@ -420,9 +421,11 @@ class PulseHUDService : Service() {
     private fun showPopup() {
         if (popupView != null) return
         popupVisible.value = true
+        val screenWidth = resources.displayMetrics.widthPixels
+        val peekX       = (screenWidth * 0.55f).toInt()
 
         val params = LayoutParams(
-            resources.displayMetrics.widthPixels,   // explicit width so x-offset slides it behind edges
+            screenWidth,   // explicit width so x-offset slides it behind edges
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE
@@ -465,17 +468,62 @@ class PulseHUDService : Service() {
             private var downParamX    = 0
             private var downParamY    = 0
             private var draggingPopup = false
+            private var vt: VelocityTracker?   = null
+            private var snapXAnim: SpringAnimation? = null
+
+            // Snap-target selection: velocity wins over position if fling is fast enough.
+            private fun calcSnapX(currentX: Int, velocityX: Float): Int = when {
+                velocityX < -1500f                         -> -peekX
+                velocityX >  1500f                         ->  peekX
+                currentX  < -(screenWidth * 0.25f).toInt() -> -peekX
+                currentX  >  (screenWidth * 0.25f).toInt() ->  peekX
+                else                                        ->  0
+            }
+
+            // Teleport LayoutParams.x to targetX, then spring translationX → 0 so the
+            // popup visually bounces from its current position — same trick as bubble snap.
+            private fun snapPopup(targetX: Int) {
+                val pp = popupParams ?: return
+                snapXAnim?.cancel()
+                lastPopupX = targetX
+                serviceScope.launch { prefs.setPopupPosition(targetX, pp.y) }
+                val startOffset = (pp.x - targetX).toFloat()
+                pp.x = targetX
+                if (isAttachedToWindow) windowManager.updateViewLayout(this, pp)
+                translationX = startOffset
+                snapXAnim = SpringAnimation(this, DynamicAnimation.TRANSLATION_X, 0f).apply {
+                    spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
+                    spring.stiffness    = SpringForce.STIFFNESS_MEDIUM
+                    start()
+                }
+            }
+
+            // If a snap is in flight when the user grabs the popup, reconcile LayoutParams.x
+            // with the current visual position so dragging starts from the right place.
+            private fun syncSnapState() {
+                snapXAnim?.cancel()
+                val pp = popupParams ?: return
+                pp.x += translationX.toInt()
+                translationX = 0f
+                if (isAttachedToWindow) windowManager.updateViewLayout(this, pp)
+            }
 
             override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
                 when (ev.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        downRawX      = ev.rawX
-                        downRawY      = ev.rawY
-                        downParamX    = popupParams?.x ?: lastPopupX
-                        downParamY    = popupParams?.y ?: lastPopupY
+                        syncSnapState()
+                        val pp    = popupParams ?: return false
+                        downRawX  = ev.rawX
+                        downRawY  = ev.rawY
+                        downParamX = pp.x
+                        downParamY = pp.y
                         draggingPopup = false
+                        vt?.recycle()
+                        vt = VelocityTracker.obtain()
+                        vt?.addMovement(ev)
                     }
                     MotionEvent.ACTION_MOVE -> {
+                        vt?.addMovement(ev)
                         if (!draggingPopup &&
                             (abs(ev.rawX - downRawX) > 20 || abs(ev.rawY - downRawY) > 20)) {
                             draggingPopup = true
@@ -489,14 +537,20 @@ class PulseHUDService : Service() {
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        downRawX      = event.rawX
-                        downRawY      = event.rawY
-                        downParamX    = popupParams?.x ?: lastPopupX
-                        downParamY    = popupParams?.y ?: lastPopupY
+                        syncSnapState()
+                        val pp    = popupParams ?: return true
+                        downRawX  = event.rawX
+                        downRawY  = event.rawY
+                        downParamX = pp.x
+                        downParamY = pp.y
                         draggingPopup = false
+                        vt?.recycle()
+                        vt = VelocityTracker.obtain()
+                        vt?.addMovement(event)
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
+                        vt?.addMovement(event)
                         if (!draggingPopup &&
                             (abs(event.rawX - downRawX) > 20 || abs(event.rawY - downRawY) > 20)) {
                             draggingPopup = true
@@ -512,13 +566,13 @@ class PulseHUDService : Service() {
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         if (draggingPopup) {
                             draggingPopup = false
-                            popupParams?.let { pp ->
-                                lastPopupX = pp.x
-                                lastPopupY = pp.y
-                                serviceScope.launch { prefs.setPopupPosition(pp.x, pp.y) }
-                            }
+                            val pp = popupParams
+                            val vx = vt?.let { it.computeCurrentVelocity(1000); it.xVelocity } ?: 0f
+                            vt?.recycle(); vt = null
+                            snapPopup(calcSnapX(pp?.x ?: 0, vx))
                             return true
                         }
+                        vt?.recycle(); vt = null
                     }
                     MotionEvent.ACTION_OUTSIDE -> { hidePopup(); return true }
                 }
