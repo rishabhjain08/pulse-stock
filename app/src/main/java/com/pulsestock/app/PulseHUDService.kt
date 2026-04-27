@@ -79,6 +79,7 @@ class PulseHUDService : Service() {
     private var trashOverlay: View?               = null
     private var popupView: View?                  = null
     private var popupParams: LayoutParams?        = null
+    private var lastPopupX: Int                   = 0
     private var lastPopupY: Int                   = 80
     private var symbolsJob: Job?                  = null
     private var currentSymbols                    = emptyList<String>()
@@ -154,7 +155,10 @@ class PulseHUDService : Service() {
         lifecycleOwner.onResume()
 
         // Restore saved popup position.
-        serviceScope.launch { lastPopupY = prefs.popupY.first() }
+        serviceScope.launch {
+            lastPopupX = prefs.popupX.first()
+            lastPopupY = prefs.popupY.first()
+        }
 
         // Outer loop: restart everything when the watchlist changes.
         symbolsJob = serviceScope.launch {
@@ -418,15 +422,17 @@ class PulseHUDService : Service() {
         popupVisible.value = true
 
         val params = LayoutParams(
-            LayoutParams.MATCH_PARENT,
+            resources.displayMetrics.widthPixels,   // explicit width so x-offset slides it behind edges
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE
                     or LayoutParams.FLAG_NOT_TOUCH_MODAL
-                    or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                    or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                    or LayoutParams.FLAG_LAYOUT_NO_LIMITS,  // allow off-screen positioning
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.BOTTOM    // left-anchored: x=0 flush left, negative slides behind left edge
+            x = lastPopupX
             y = lastPopupY
         }
         popupParams = params
@@ -454,19 +460,24 @@ class PulseHUDService : Service() {
         }
 
         val touchWrapper = object : android.widget.FrameLayout(this) {
+            private var downRawX      = 0f
             private var downRawY      = 0f
+            private var downParamX    = 0
             private var downParamY    = 0
             private var draggingPopup = false
 
             override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
                 when (ev.action) {
                     MotionEvent.ACTION_DOWN -> {
+                        downRawX      = ev.rawX
                         downRawY      = ev.rawY
+                        downParamX    = popupParams?.x ?: lastPopupX
                         downParamY    = popupParams?.y ?: lastPopupY
                         draggingPopup = false
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        if (!draggingPopup && abs(ev.rawY - downRawY) > 20) {
+                        if (!draggingPopup &&
+                            (abs(ev.rawX - downRawX) > 20 || abs(ev.rawY - downRawY) > 20)) {
                             draggingPopup = true
                             return true
                         }
@@ -478,18 +489,21 @@ class PulseHUDService : Service() {
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
+                        downRawX      = event.rawX
                         downRawY      = event.rawY
+                        downParamX    = popupParams?.x ?: lastPopupX
                         downParamY    = popupParams?.y ?: lastPopupY
                         draggingPopup = false
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        if (!draggingPopup && abs(event.rawY - downRawY) > 20) {
+                        if (!draggingPopup &&
+                            (abs(event.rawX - downRawX) > 20 || abs(event.rawY - downRawY) > 20)) {
                             draggingPopup = true
                         }
                         if (draggingPopup) {
                             val pp = popupParams ?: return true
-                            // Gravity.BOTTOM: positive y = offset from bottom upward
+                            pp.x = downParamX + (event.rawX - downRawX).toInt()
                             pp.y = (downParamY + (downRawY - event.rawY).toInt()).coerceAtLeast(0)
                             if (isAttachedToWindow) windowManager.updateViewLayout(this, pp)
                             return true
@@ -498,9 +512,10 @@ class PulseHUDService : Service() {
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         if (draggingPopup) {
                             draggingPopup = false
-                            popupParams?.y?.let { y ->
-                                lastPopupY = y
-                                serviceScope.launch { prefs.setPopupY(y) }
+                            popupParams?.let { pp ->
+                                lastPopupX = pp.x
+                                lastPopupY = pp.y
+                                serviceScope.launch { prefs.setPopupPosition(pp.x, pp.y) }
                             }
                             return true
                         }

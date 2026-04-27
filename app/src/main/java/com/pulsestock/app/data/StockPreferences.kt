@@ -19,6 +19,7 @@ class StockPreferences(private val context: Context) {
         private val WATCHED_SYMBOLS_KEY = stringPreferencesKey("watched_symbols")
         private val TILE_ACTIVE_KEY     = booleanPreferencesKey("tile_active")
         private val BUBBLE_ACTIVE_KEY   = booleanPreferencesKey("bubble_active")
+        private val POPUP_X_KEY         = intPreferencesKey("popup_x")
         private val POPUP_Y_KEY         = intPreferencesKey("popup_y")
 
         val DEFAULT_SYMBOLS = listOf("NASDAQ:AAPL", "NASDAQ:TSLA", "NASDAQ:NVDA", "NASDAQ:MSFT", "NASDAQ:GOOGL")
@@ -74,9 +75,10 @@ class StockPreferences(private val context: Context) {
         context.dataStore.edit { it[BUBBLE_ACTIVE_KEY] = active }
     }
 
+    val popupX: Flow<Int> = context.dataStore.data.map { it[POPUP_X_KEY] ?: 0 }
     val popupY: Flow<Int> = context.dataStore.data.map { it[POPUP_Y_KEY] ?: 80 }
 
-    suspend fun setPopupY(y: Int) {
-        context.dataStore.edit { it[POPUP_Y_KEY] = y }
+    suspend fun setPopupPosition(x: Int, y: Int) {
+        context.dataStore.edit { it[POPUP_X_KEY] = x; it[POPUP_Y_KEY] = y }
     }
 }
