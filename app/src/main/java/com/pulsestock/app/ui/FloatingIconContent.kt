@@ -88,18 +88,18 @@ fun FloatingIconContent(isPressed: Boolean = false) {
     // by the FrameLayout bounds (scale() affects drawing, not layout size).
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier.size(70.dp)
+        modifier = Modifier.size(62.dp)
     ) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(56.dp)
+            .size(48.dp)
             .scale(finalScale)
             .shadow(
                 elevation    = elevation,
                 shape        = CircleShape,
                 clip         = false,
-                ambientColor = PulseGreen.copy(alpha = 0.45f),
+                ambientColor = Color.Black.copy(alpha = 0.08f),
                 spotColor    = PulseGreen.copy(alpha = 0.65f)
             )
             .clip(CircleShape)
@@ -109,7 +109,7 @@ fun FloatingIconContent(isPressed: Boolean = false) {
             imageVector        = Icons.Default.ShowChart,
             contentDescription = "PulseStock",
             tint               = Color.White,
-            modifier           = Modifier.size(28.dp)
+            modifier           = Modifier.size(24.dp)
         )
         // Glass specular arc — the key detail that makes a flat circle feel like a 3D bubble
         Canvas(modifier = Modifier.matchParentSize()) {

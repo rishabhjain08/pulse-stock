@@ -233,7 +233,7 @@ class PulseHUDService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = screenWidth - (72 * density).toInt()
+            x = screenWidth - (62 * density).toInt()
             y = (200 * density).toInt()
         }
         floatingIconParams = params
@@ -267,9 +267,8 @@ class PulseHUDService : Service() {
 
             private fun snapToEdge() {
                 val p = floatingIconParams ?: return
-                val margin  = (14 * density).toInt()
-                val targetX = if (p.x + width / 2 < screenWidth / 2) margin
-                              else screenWidth - width - margin
+                val targetX = if (p.x + width / 2 < screenWidth / 2) 0
+                              else screenWidth - width
                 snapAnim?.cancel()
                 // Teleport the window to targetX immediately, then offset the View's own
                 // translationX so it visually stays put. Spring translationX → 0 gives the
