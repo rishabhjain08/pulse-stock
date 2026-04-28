@@ -123,6 +123,34 @@ class PulseHUDService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val dm = resources.displayMetrics
+        val sw = dm.widthPixels
+        val bw = (62 * dm.density).toInt()
+
+        // Re-snap bubble to the same edge in the new screen dimensions.
+        floatingIconParams?.let { p ->
+            p.x = if (p.x + bw / 2 < sw / 2) 0 else sw - bw
+            floatingIcon?.translationX = 0f
+            try { floatingIcon?.let { windowManager.updateViewLayout(it, p) } } catch (_: Exception) {}
+        }
+
+        // Resize popup window width and translate its snap state to the new peekX.
+        popupParams?.let { pp ->
+            val newPeekX = (sw * 0.55f).toInt()
+            pp.width = sw
+            pp.x = when {
+                lastPopupX < 0 -> -newPeekX
+                lastPopupX > 0 ->  newPeekX
+                else           ->  0
+            }
+            lastPopupX = pp.x
+            popupView?.translationX = 0f
+            try { popupView?.let { windowManager.updateViewLayout(it, pp) } } catch (_: Exception) {}
+        }
+    }
+
     // ── Bubble mode ──────────────────────────────────────────────────────────
 
     private fun showBubble() {
@@ -259,6 +287,12 @@ class PulseHUDService : Service() {
             private var popupWasOpen      = false
             private var snapAnim: SpringAnimation? = null
 
+            // Always re-read screen dimensions so they stay correct after rotation.
+            private val sw get() = resources.displayMetrics.widthPixels
+            private val sh get() = resources.displayMetrics.heightPixels
+            private val trashCx get() = sw / 2f
+            private val trashCy get() = sh - (80 * resources.displayMetrics.density)
+
             private val longPressRunnable = Runnable {
                 isLongPress = true
                 val appIntent = Intent(this@PulseHUDService, MainActivity::class.java).apply {
@@ -269,8 +303,8 @@ class PulseHUDService : Service() {
 
             private fun snapToEdge() {
                 val p = floatingIconParams ?: return
-                val targetX = if (p.x + width / 2 < screenWidth / 2) 0
-                              else screenWidth - width
+                val targetX = if (p.x + width / 2 < sw / 2) 0
+                              else sw - width
                 snapAnim?.cancel()
                 // Teleport the window to targetX immediately, then offset the View's own
                 // translationX so it visually stays put. Spring translationX → 0 gives the
@@ -315,14 +349,14 @@ class PulseHUDService : Service() {
                             showTrashOverlay()
                         }
                         if (isDragging) {
-                            p.x = (downParamX + dx.toInt()).coerceIn(0, screenWidth - width)
-                            p.y = (downParamY + dy.toInt()).coerceIn(0, screenHeight - height)
+                            p.x = (downParamX + dx.toInt()).coerceIn(0, sw - width)
+                            p.y = (downParamY + dy.toInt()).coerceIn(0, sh - height)
                             if (floatingIcon?.isAttachedToWindow == true) {
                                 windowManager.updateViewLayout(this, p)
                             }
                             val iconCentreX = p.x + (width / 2f)
                             val iconCentreY = p.y + (height / 2f)
-                            val overTrash = hypot(iconCentreX - trashCentreX, iconCentreY - trashCentreY) < trashRadiusPx
+                            val overTrash = hypot(iconCentreX - trashCx, iconCentreY - trashCy) < trashRadiusPx
                             if (overTrash && !wasOverTrash) triggerHapticTick()
                             wasOverTrash       = overTrash
                             trashHovered.value = overTrash
@@ -475,14 +509,18 @@ class PulseHUDService : Service() {
             private var vt: VelocityTracker?   = null
             private var snapXAnim: SpringAnimation? = null
 
+            // Live reads so snap thresholds are correct after rotation.
+            private val sw get() = resources.displayMetrics.widthPixels
+            private val px get() = (sw * 0.55f).toInt()
+
             // Use drag DISPLACEMENT direction (not velocity sign) — velocity sign can be
             // unreliable after an intercept resets the tracker. Speed magnitude still gives
             // the "fast fling overrides position threshold" feel.
             private fun calcSnapX(currentX: Int, dragDeltaX: Int, speed: Float): Int = when {
-                speed > 800f && dragDeltaX < -50 -> -peekX
-                speed > 800f && dragDeltaX >  50 ->  peekX
-                currentX < -(screenWidth * 0.25f).toInt() -> -peekX
-                currentX >  (screenWidth * 0.25f).toInt() ->  peekX
+                speed > 800f && dragDeltaX < -50 -> -px
+                speed > 800f && dragDeltaX >  50 ->  px
+                currentX < -(sw * 0.25f).toInt() -> -px
+                currentX >  (sw * 0.25f).toInt() ->  px
                 else -> 0
             }
 
