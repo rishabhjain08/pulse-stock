@@ -58,6 +58,9 @@ class PulseHUDService : Service() {
         const val NOTIFICATION_ID = 7001
         const val CHANNEL_ID      = "pulse_bubble"
 
+        // Removed in API 36; raw value preserved for overlay touch-outside detection.
+        private const val FLAG_WATCH_OUTSIDE_TOUCH = 0x00040000
+
         val bubbleRunning = MutableStateFlow(false)
 
         /** True while the service is connected via WebSocket (real-time mode). */
@@ -423,7 +426,7 @@ class PulseHUDService : Service() {
         val peekX       = (screenWidth * 0.55f).toInt()
 
         // Watch outside touches only when centered — a peeked popup must survive normal phone use.
-        val outsideTouchFlag = if (lastPopupX == 0) LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH else 0
+        val outsideTouchFlag = if (lastPopupX == 0) FLAG_WATCH_OUTSIDE_TOUCH else 0
         val params = LayoutParams(
             screenWidth,   // explicit width so x-offset slides it behind edges
             LayoutParams.WRAP_CONTENT,
@@ -492,9 +495,9 @@ class PulseHUDService : Service() {
                 lastPopupX = targetX
                 serviceScope.launch { prefs.setPopupPosition(targetX, pp.y) }
                 pp.flags = if (targetX == 0) {
-                    pp.flags or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                    pp.flags or FLAG_WATCH_OUTSIDE_TOUCH
                 } else {
-                    pp.flags and LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
+                    pp.flags and FLAG_WATCH_OUTSIDE_TOUCH.inv()
                 }
                 val startOffset = (pp.x - targetX).toFloat()
                 pp.x = targetX
