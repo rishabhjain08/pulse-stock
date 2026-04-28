@@ -245,6 +245,8 @@ class PulseHUDService : Service() {
         // Use windowManager display bounds so nav bar insets don't skew the hit target.
         val trashCentreY  = screenHeight - (80 * density)
 
+        val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+
         val wrapper = object : android.widget.FrameLayout(this@PulseHUDService) {
             private val longPressHandler = Handler(Looper.getMainLooper())
             private var downX           = 0f
@@ -307,7 +309,7 @@ class PulseHUDService : Service() {
                     MotionEvent.ACTION_MOVE -> {
                         val dx = event.rawX - downX
                         val dy = event.rawY - downY
-                        if (!isDragging && (abs(dx) > 10 || abs(dy) > 10)) {
+                        if (!isDragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
                             isDragging = true
                             longPressHandler.removeCallbacks(longPressRunnable)
                             showTrashOverlay()
