@@ -128,8 +128,12 @@ class PulseHUDService : Service() {
         bubbleRunning.value = true
         serviceScope.launch { prefs.setBubbleActive(true) }
         ensureStreamAndForeground()
-        showFloatingIcon()
-        showPopup()
+        serviceScope.launch {
+            lastPopupX = prefs.popupX.first()
+            lastPopupY = prefs.popupY.first()
+            showFloatingIcon()
+            showPopup()
+        }
     }
 
     private fun hideBubble() {
@@ -154,12 +158,6 @@ class PulseHUDService : Service() {
 
         lifecycleOwner.onStart()
         lifecycleOwner.onResume()
-
-        // Restore saved popup position.
-        serviceScope.launch {
-            lastPopupX = prefs.popupX.first()
-            lastPopupY = prefs.popupY.first()
-        }
 
         // Outer loop: restart everything when the watchlist changes.
         symbolsJob = serviceScope.launch {
@@ -424,13 +422,15 @@ class PulseHUDService : Service() {
         val screenWidth = resources.displayMetrics.widthPixels
         val peekX       = (screenWidth * 0.55f).toInt()
 
+        // Watch outside touches only when centered — a peeked popup must survive normal phone use.
+        val outsideTouchFlag = if (lastPopupX == 0) LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH else 0
         val params = LayoutParams(
             screenWidth,   // explicit width so x-offset slides it behind edges
             LayoutParams.WRAP_CONTENT,
             LayoutParams.TYPE_APPLICATION_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE
                     or LayoutParams.FLAG_NOT_TOUCH_MODAL
-                    or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                    or outsideTouchFlag
                     or LayoutParams.FLAG_LAYOUT_NO_LIMITS,  // allow off-screen positioning
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -471,22 +471,31 @@ class PulseHUDService : Service() {
             private var vt: VelocityTracker?   = null
             private var snapXAnim: SpringAnimation? = null
 
-            // Snap-target selection: velocity wins over position if fling is fast enough.
-            private fun calcSnapX(currentX: Int, velocityX: Float): Int = when {
-                velocityX < -1500f                         -> -peekX
-                velocityX >  1500f                         ->  peekX
-                currentX  < -(screenWidth * 0.25f).toInt() -> -peekX
-                currentX  >  (screenWidth * 0.25f).toInt() ->  peekX
-                else                                        ->  0
+            // Use drag DISPLACEMENT direction (not velocity sign) — velocity sign can be
+            // unreliable after an intercept resets the tracker. Speed magnitude still gives
+            // the "fast fling overrides position threshold" feel.
+            private fun calcSnapX(currentX: Int, dragDeltaX: Int, speed: Float): Int = when {
+                speed > 800f && dragDeltaX < -50 -> -peekX
+                speed > 800f && dragDeltaX >  50 ->  peekX
+                currentX < -(screenWidth * 0.25f).toInt() -> -peekX
+                currentX >  (screenWidth * 0.25f).toInt() ->  peekX
+                else -> 0
             }
 
             // Teleport LayoutParams.x to targetX, then spring translationX → 0 so the
             // popup visually bounces from its current position — same trick as bubble snap.
+            // Also toggles FLAG_WATCH_OUTSIDE_TOUCH: on at center so tap-outside closes;
+            // off at peek so normal phone gestures don't accidentally dismiss a stowed popup.
             private fun snapPopup(targetX: Int) {
                 val pp = popupParams ?: return
                 snapXAnim?.cancel()
                 lastPopupX = targetX
                 serviceScope.launch { prefs.setPopupPosition(targetX, pp.y) }
+                pp.flags = if (targetX == 0) {
+                    pp.flags or LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                } else {
+                    pp.flags and LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
+                }
                 val startOffset = (pp.x - targetX).toFloat()
                 pp.x = targetX
                 if (isAttachedToWindow) windowManager.updateViewLayout(this, pp)
@@ -569,12 +578,18 @@ class PulseHUDService : Service() {
                             val pp = popupParams
                             val vx = vt?.let { it.computeCurrentVelocity(1000); it.xVelocity } ?: 0f
                             vt?.recycle(); vt = null
-                            snapPopup(calcSnapX(pp?.x ?: 0, vx))
+                            val dragDeltaX = (pp?.x ?: 0) - downParamX
+                            snapPopup(calcSnapX(pp?.x ?: 0, dragDeltaX, abs(vx)))
                             return true
                         }
                         vt?.recycle(); vt = null
                     }
-                    MotionEvent.ACTION_OUTSIDE -> { hidePopup(); return true }
+                    // Small delay so the bubble's ACTION_DOWN captures popupWasOpen=true first,
+                    // preventing the reopen race when the user taps the bubble to close.
+                    MotionEvent.ACTION_OUTSIDE -> {
+                        Handler(Looper.getMainLooper()).postDelayed({ hidePopup() }, 50)
+                        return true
+                    }
                 }
                 return super.onTouchEvent(event)
             }
