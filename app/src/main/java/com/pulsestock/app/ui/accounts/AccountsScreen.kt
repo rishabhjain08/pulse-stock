@@ -72,7 +72,7 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         vm.linkToken.collect { token ->
             val config = LinkTokenConfiguration.Builder().token(token).build()
-            launcher.launch(Plaid.create(context, config))
+            launcher.launch(Plaid.create(context.applicationContext as android.app.Application, config))
         }
     }
 
