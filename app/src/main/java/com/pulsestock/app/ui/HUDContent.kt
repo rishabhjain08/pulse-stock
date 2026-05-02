@@ -148,14 +148,13 @@ private fun connectionLabel(
     symbols: List<String>
 ): String {
     val allIndian = symbols.isNotEmpty() && symbols.all { isIndian(it) }
-    val anyIndian = symbols.any { isIndian(it) }
     return when (state) {
-        is StockStreamManager.ConnectionState.Connected ->
-            if (anyIndian) "Live · 15s" else "Live"
-        is StockStreamManager.ConnectionState.Connecting   -> "Connecting…"
-        is StockStreamManager.ConnectionState.Error        -> staleLabel(lastRefreshMs) ?: "Reconnecting…"
+        is StockStreamManager.ConnectionState.Connected    -> "Live"
+        is StockStreamManager.ConnectionState.Connecting  -> "Connecting…"
+        is StockStreamManager.ConnectionState.Error       -> staleLabel(lastRefreshMs) ?: "Reconnecting…"
         is StockStreamManager.ConnectionState.Disconnected ->
-            if (allIndian && lastRefreshMs > 0) "Live · 15s"
+            // Indian-only watchlist: no WebSocket, REST polling — show actual data age
+            if (allIndian) staleLabel(lastRefreshMs) ?: "Fetching…"
             else staleLabel(lastRefreshMs) ?: "Offline"
     }
 }
