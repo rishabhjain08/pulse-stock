@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 data class AccountsUiState(
     val institutions: List<InstitutionWithAccounts> = emptyList(),
     val isInitialLoad: Boolean = true,
+    val isSyncing: Boolean = false,
     val error: String? = null,
 )
 
@@ -41,12 +42,12 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         get() = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
 
     init {
+        // Only reads from the local DB — no Plaid API calls on startup.
         viewModelScope.launch {
             repo.institutions.collect { list ->
                 _uiState.value = _uiState.value.copy(institutions = list, isInitialLoad = false)
             }
         }
-        viewModelScope.launch { runCatching { repo.refreshAll() } }
     }
 
     fun requestLinkToken() {
@@ -73,8 +74,17 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repo.disconnect(institutionId) }
     }
 
-    fun refresh() {
-        viewModelScope.launch { runCatching { repo.refreshAll() } }
+    fun sync() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSyncing = true)
+            try {
+                repo.refreshAll()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = "Sync failed: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(isSyncing = false)
+            }
+        }
     }
 
     fun dismissError() {

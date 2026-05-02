@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -138,6 +139,9 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    item {
+                        SyncRow(isSyncing = state.isSyncing, onSync = vm::sync)
+                    }
                     items(state.institutions, key = { it.institution.institutionId }) { iwa ->
                         InstitutionCard(
                             iwa = iwa,
@@ -148,6 +152,33 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SyncRow(isSyncing: Boolean, onSync: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+    ) {
+        if (isSyncing) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(onClick = onSync) {
+                Icon(
+                    imageVector = Icons.Default.Sync,
+                    contentDescription = "Sync balances",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Text(
+            text = if (isSyncing) "Syncing…" else "Sync balances",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(end = 4.dp),
+        )
     }
 }
 
