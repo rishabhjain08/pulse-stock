@@ -30,10 +30,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 private const val TAG = "StockStream"
-private const val FINNHUB_WS_URL    = "wss://ws.finnhub.io?token="
-private const val FINNHUB_REST_URL  = "https://finnhub.io/api/v1"
+private const val FINNHUB_WS_URL     = "wss://ws.finnhub.io?token="
+private const val FINNHUB_REST_URL   = "https://finnhub.io/api/v1"
+private const val YAHOO_QUOTE_URL    = "https://query1.finance.yahoo.com/v7/finance/quote"
 private const val RECONNECT_DELAY_MS = 3_000L
-private const val POLL_INTERVAL_MS  = 60_000L
+private const val POLL_INTERVAL_MS   = 60_000L
+private const val INDIAN_POLL_MS     = 30_000L  // refresh interval for Indian stocks while popup open
 
 class StockStreamManager {
 
@@ -76,23 +78,48 @@ class StockStreamManager {
     private var streamJob: Job? = null
     private var pollJob:   Job? = null
 
-    // ── Streaming (WebSocket) ────────────────────────────────────────────────
+    // ── Streaming (WebSocket + Indian polling) ───────────────────────────────
 
     /**
-     * Connect WebSocket for real-time ticks.
-     * Always does a REST /quote fetch first so prices are never blank —
-     * this covers after-hours when the WebSocket connects but Finnhub sends no trades.
+     * Start live data for all symbols.
+     * US/crypto → Finnhub WebSocket with an initial REST fetch.
+     * Indian (NSE/BSE) → Yahoo Finance REST, refreshed every 30s while popup is open.
      */
     fun startStreaming(symbols: List<String>, scope: CoroutineScope) {
         if (symbols.isEmpty()) return
         stopStreaming()
         streamJob = scope.launch(Dispatchers.IO) {
-            fetchRestQuotes(symbols, this)  // guaranteed current price regardless of market hours
-            connectLoop(symbols)            // overlays real-time ticks on top during trading hours
+            fetchRestQuotes(symbols, this)
+
+            val indianSymbols = symbols.filter { isIndianSymbol(it) }
+            val wsSymbols     = symbols.filterNot { isIndianSymbol(it) }
+
+            // Keep Indian stocks fresh while the popup is open
+            if (indianSymbols.isNotEmpty()) {
+                launch {
+                    while (isActive) {
+                        delay(INDIAN_POLL_MS)
+                        val results = fetchYahooQuotes(indianSymbols)
+                        results.forEach { (sym, price, baseline) ->
+                            prices[sym]    = price
+                            baselines[sym] = baseline
+                        }
+                        if (prices.isNotEmpty()) {
+                            _lastRestRefreshMs.value = System.currentTimeMillis()
+                            _snapshot.emit(PriceSnapshot(prices.toMap(), baselines.toMap()))
+                        }
+                    }
+                }
+            }
+
+            // WebSocket for US/crypto; if only Indian symbols, parent waits for the polling child
+            if (wsSymbols.isNotEmpty()) {
+                connectLoop(wsSymbols)
+            }
         }
     }
 
-    /** Disconnect WebSocket. Cached prices are preserved for instant display on next open. */
+    /** Disconnect WebSocket + Indian polling. Cached prices preserved for instant display on reopen. */
     fun stopStreaming() {
         streamJob?.cancel()
         streamJob = null
@@ -101,7 +128,7 @@ class StockStreamManager {
 
     // ── Polling (REST every 60s) ─────────────────────────────────────────────
 
-    /** Start a 60-second REST poll loop. Fetches immediately, then every 60s. */
+    /** Start a 60-second REST poll loop for all symbols (US via Finnhub, Indian via Yahoo). */
     fun startPolling(symbols: List<String>, scope: CoroutineScope) {
         if (symbols.isEmpty()) return
         stopPolling()
@@ -137,12 +164,23 @@ class StockStreamManager {
 
     suspend fun fetchQuote(fullSymbol: String): QuoteResponse? = withContext(Dispatchers.IO) {
         try {
-            val ticker = finnhubTicker(fullSymbol)
-            val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
-            val body   = restClient.newCall(Request.Builder().url(url).build()).execute()
-                .use { resp -> if (!resp.isSuccessful) null else resp.body?.string() }
-                ?: return@withContext null
-            json.decodeFromString<QuoteResponse>(body)
+            if (isIndianSymbol(fullSymbol)) {
+                val results = fetchYahooQuotes(listOf(fullSymbol))
+                val (_, price, baseline) = results.firstOrNull() ?: return@withContext null
+                QuoteResponse(
+                    current   = price,
+                    prevClose = baseline,
+                    change    = price - baseline,
+                    changePct = if (baseline > 0.0) (price - baseline) / baseline * 100.0 else 0.0
+                )
+            } else {
+                val ticker = finnhubTicker(fullSymbol)
+                val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
+                val body   = restClient.newCall(Request.Builder().url(url).build()).execute()
+                    .use { resp -> if (!resp.isSuccessful) null else resp.body?.string() }
+                    ?: return@withContext null
+                json.decodeFromString<QuoteResponse>(body)
+            }
         } catch (e: Exception) {
             null
         }
@@ -165,12 +203,14 @@ class StockStreamManager {
                 json.decodeFromString<YahooSearchResponse>(body)
                     .quotes
                     .filter { it.quoteType == "EQUITY" || it.quoteType == "ETF" }
-                    .mapNotNull { q ->
-                        val exchange = yahooExchangeToPrefix(q.exchDisp) ?: return@mapNotNull null
+                    .mapNotNull { quote ->
+                        val exchange = yahooExchangeToPrefix(quote.exchDisp) ?: return@mapNotNull null
+                        // Strip Yahoo suffixes (.NS for NSE India, .BO for BSE India)
+                        val cleanTicker = quote.symbol.removeSuffix(".NS").removeSuffix(".BO")
                         StockSuggestion(
-                            fullSymbol = "$exchange:${q.symbol}",
-                            ticker     = q.symbol,
-                            name       = q.shortname.ifBlank { q.longname },
+                            fullSymbol = "$exchange:$cleanTicker",
+                            ticker     = cleanTicker,
+                            name       = quote.shortname.ifBlank { quote.longname },
                             exchange   = exchange
                         )
                     }
@@ -190,6 +230,11 @@ class StockStreamManager {
         exchDisp.contains("American", ignoreCase = true)        -> "AMEX"
         exchDisp.equals("CBOE", ignoreCase = true)              -> "CBOE"
         exchDisp.equals("BATS", ignoreCase = true)              -> "BATS"
+        // NSI is Yahoo's internal code for NSE India; BOM is Yahoo's code for BSE
+        exchDisp.equals("NSE", ignoreCase = true)
+            || exchDisp.equals("NSI", ignoreCase = true)        -> "NSE"
+        exchDisp.equals("BSE", ignoreCase = true)
+            || exchDisp.equals("BOM", ignoreCase = true)        -> "BSE"
         else -> null
     }
 
@@ -197,29 +242,27 @@ class StockStreamManager {
 
     private suspend fun fetchRestQuotes(symbols: List<String>, scope: CoroutineScope) {
         try {
-            val fetches = symbols.map { fullSymbol ->
-                scope.async(Dispatchers.IO) {
-                    val ticker = finnhubTicker(fullSymbol)
-                    val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
-                    try {
-                        val body = restClient.newCall(Request.Builder().url(url).build())
-                            .execute().use { resp ->
-                                if (!resp.isSuccessful) return@async null
-                                resp.body?.string()
-                            } ?: return@async null
-                        val q = json.decodeFromString<QuoteResponse>(body)
-                        if (q.current > 0.0 || q.prevClose > 0.0) fullSymbol to q else null
-                    } catch (e: Exception) {
-                        Log.w(TAG, "REST quote failed for $fullSymbol: ${e.message}")
-                        null
-                    }
-                }
+            val indianSymbols  = symbols.filter { isIndianSymbol(it) }
+            val finnhubSymbols = symbols.filterNot { isIndianSymbol(it) }
+
+            // Finnhub: one async call per US/crypto symbol (all run in parallel)
+            val finnhubDeferred = finnhubSymbols.map { fullSymbol ->
+                scope.async(Dispatchers.IO) { fetchFinnhubQuote(fullSymbol) }
             }
-            fetches.awaitAll().filterNotNull().forEach { (sym, q) ->
-                // After-hours: Finnhub may return c=0; fall back to prevClose so we never show $0
-                prices[sym]    = if (q.current > 0.0) q.current else q.prevClose
-                baselines[sym] = if (q.prevClose > 0.0) q.prevClose else q.current
+            // Yahoo Finance: single batch call for all Indian symbols
+            val yahooDeferred = if (indianSymbols.isNotEmpty()) {
+                scope.async(Dispatchers.IO) { fetchYahooQuotes(indianSymbols) }
+            } else null
+
+            // Collect results then mutate maps sequentially (avoids data races)
+            val finnhubResults = finnhubDeferred.awaitAll().filterNotNull()
+            val yahooResults   = yahooDeferred?.await() ?: emptyList()
+
+            (finnhubResults + yahooResults).forEach { (sym, price, baseline) ->
+                prices[sym]    = price
+                baselines[sym] = baseline
             }
+
             if (prices.isNotEmpty()) {
                 _lastRestRefreshMs.value = System.currentTimeMillis()
                 _snapshot.emit(PriceSnapshot(prices.toMap(), baselines.toMap()))
@@ -228,6 +271,58 @@ class StockStreamManager {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "REST batch fetch error: ${e.message}")
+        }
+    }
+
+    /** Fetch a single US/crypto symbol from Finnhub. Returns (fullSymbol, price, baseline) or null. */
+    private fun fetchFinnhubQuote(fullSymbol: String): Triple<String, Double, Double>? {
+        val ticker = finnhubTicker(fullSymbol)
+        val url    = "$FINNHUB_REST_URL/quote?symbol=$ticker&token=${BuildConfig.FINNHUB_API_KEY}"
+        return try {
+            val body = restClient.newCall(Request.Builder().url(url).build())
+                .execute().use { resp ->
+                    if (!resp.isSuccessful) return null
+                    resp.body?.string()
+                } ?: return null
+            val q = json.decodeFromString<QuoteResponse>(body)
+            if (q.current <= 0.0 && q.prevClose <= 0.0) return null
+            Triple(
+                fullSymbol,
+                if (q.current > 0.0) q.current else q.prevClose,
+                if (q.prevClose > 0.0) q.prevClose else q.current
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Finnhub REST failed for $fullSymbol: ${e.message}")
+            null
+        }
+    }
+
+    /** Batch-fetch Indian symbols from Yahoo Finance /v7/finance/quote (free, no key). */
+    private fun fetchYahooQuotes(indianSymbols: List<String>): List<Triple<String, Double, Double>> {
+        if (indianSymbols.isEmpty()) return emptyList()
+        return try {
+            val yTickers = indianSymbols.joinToString(",") { yahooTicker(it) }
+            val url = "$YAHOO_QUOTE_URL?symbols=${
+                java.net.URLEncoder.encode(yTickers, "UTF-8")
+            }"
+            val body = restClient.newCall(
+                Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            ).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                resp.body?.string()
+            } ?: return emptyList()
+            val response      = json.decodeFromString<YahooQuoteApiResponse>(body)
+            val yTickerToFull = indianSymbols.associateBy { yahooTicker(it) }
+            response.quoteResponse.result.mapNotNull { item ->
+                val fullSymbol = yTickerToFull[item.symbol] ?: return@mapNotNull null
+                val price = item.regularMarketPrice
+                val prev  = item.regularMarketPreviousClose
+                if (price <= 0.0 && prev <= 0.0) return@mapNotNull null
+                Triple(fullSymbol, if (price > 0.0) price else prev, if (prev > 0.0) prev else price)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Yahoo Finance quote failed: ${e.message}")
+            emptyList()
         }
     }
 
@@ -279,12 +374,28 @@ class StockStreamManager {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    private fun isIndianSymbol(symbol: String) =
+        symbol.split(":").firstOrNull() in INDIAN_EXCHANGES
+
+    /** Strip exchange prefix for US stocks; pass through everything else (crypto, Indian, etc.). */
     private fun finnhubTicker(symbol: String): String {
         val parts = symbol.split(":")
         return if (parts.size == 2 && parts[0] in US_EXCHANGES) parts[1] else symbol
     }
 
+    /** Convert internal symbol to Yahoo Finance ticker format (NSE:RELIANCE → RELIANCE.NS). */
+    private fun yahooTicker(symbol: String): String {
+        val parts = symbol.split(":")
+        if (parts.size != 2) return symbol
+        return when (parts[0]) {
+            "NSE" -> "${parts[1]}.NS"
+            "BSE" -> "${parts[1]}.BO"
+            else  -> symbol
+        }
+    }
+
     companion object {
-        private val US_EXCHANGES = setOf("NYSE", "NASDAQ", "AMEX", "NYSEARCA", "BATS", "CBOE")
+        private val US_EXCHANGES     = setOf("NYSE", "NASDAQ", "AMEX", "NYSEARCA", "BATS", "CBOE")
+        private val INDIAN_EXCHANGES = setOf("NSE", "BSE")
     }
 }

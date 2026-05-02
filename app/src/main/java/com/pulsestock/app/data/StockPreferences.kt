@@ -35,7 +35,7 @@ class StockPreferences(private val context: Context) {
             if (s.isBlank()) return "Enter a ticker symbol"
             val regex = Regex("^[A-Z0-9.]{1,10}(:[A-Z0-9._\\-]{1,20})?\$")
             if (!regex.matches(s)) {
-                return "Invalid format — use EXCHANGE:TICKER, e.g. NASDAQ:AAPL or NYSE:GME"
+                return "Invalid format — use EXCHANGE:TICKER, e.g. NASDAQ:AAPL, NYSE:GME, or NSE:RELIANCE"
             }
             return null
         }

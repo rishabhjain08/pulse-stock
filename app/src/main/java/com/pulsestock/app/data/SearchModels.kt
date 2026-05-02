@@ -23,3 +23,22 @@ data class YahooQuote(
     val exchDisp: String = "",
     val quoteType: String = ""
 )
+
+// ── Yahoo Finance /v7/finance/quote response (used for Indian stock REST quotes) ──
+
+@Serializable
+data class YahooQuoteApiResponse(
+    val quoteResponse: YahooQuoteWrapper = YahooQuoteWrapper()
+)
+
+@Serializable
+data class YahooQuoteWrapper(
+    val result: List<YahooQuoteItem> = emptyList()
+)
+
+@Serializable
+data class YahooQuoteItem(
+    val symbol: String = "",
+    val regularMarketPrice: Double = 0.0,
+    val regularMarketPreviousClose: Double = 0.0
+)

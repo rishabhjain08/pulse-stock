@@ -11,6 +11,7 @@ Tap a Quick Settings tile → a floating overlay appears showing live prices for
 - **Quick Settings Tile** — one tap to start or stop the HUD from the notification shade
 - **Floating Overlay** — semi-transparent card drawn over any app or home screen
 - **Live WebSocket Stream** — tick-by-tick prices from Finnhub.io (free tier, no credit card)
+- **Indian Stock Support** — NSE and BSE stocks via Yahoo Finance (free, no key); search `NSE:RELIANCE`, `NSE:INFY`, etc.
 - **Odometer Animation** — individual digits scroll vertically on price change (Robinhood style)
 - **Colour-coded P&L** — green `#00C805` for gains, red `#FF5A5F` for losses
 - **Android 16 Now Bar** — live price chip next to the system clock via `setShortCriticalText`
@@ -220,7 +221,9 @@ Do not grant Admin, "Release to production", or any financial/store presence per
 
 ---
 
-## Free Tier Limits (Finnhub.io)
+## Free Tier Limits
+
+### Finnhub.io (US stocks)
 
 | Limit | Value |
 |---|---|
@@ -229,7 +232,15 @@ Do not grant Admin, "Release to production", or any financial/store presence per
 | US stock data | Real-time |
 | Cost | Free |
 
-The free tier is sufficient for 5 symbols with continuous streaming.
+### Yahoo Finance (Indian stocks — NSE/BSE)
+
+| Limit | Value |
+|---|---|
+| Auth required | None |
+| Indian stock data | ~15-second delayed quotes while popup open; 60-second poll when closed |
+| Cost | Free (unofficial API) |
+
+The free tier is sufficient for 5 symbols with continuous streaming. Mix US and Indian symbols freely.
 
 ---
 
