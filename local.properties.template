@@ -4,5 +4,9 @@
 # Get a free key at https://finnhub.io/
 FINNHUB_API_KEY=your_finnhub_api_key_here
 
+# PoarVault backend (populated by infra/scripts/get-outputs.sh after setup)
+POARVAULT_API_URL=https://your-api-id.execute-api.us-east-1.amazonaws.com
+POARVAULT_API_KEY=your_poarvault_api_key_here
+
 # Android SDK path (Android Studio fills this automatically)
 # sdk.dir=/Users/you/Library/Android/sdk

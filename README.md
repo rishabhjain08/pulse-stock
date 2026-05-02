@@ -213,6 +213,104 @@ Do not grant Admin, "Release to production", or any financial/store presence per
 
 ---
 
+## PoarVault Backend Setup (optional)
+
+PoarVault is the financial "slice and dice" feature inside PulseStock. It connects to bank accounts via Plaid and stores all financial data **locally on the device** — no customer data ever lands in the cloud. The backend is a stateless AWS Lambda proxy that injects Plaid credentials server-side (required by Plaid's security model) and stores nothing.
+
+> Skip this section if you only want the stock HUD.
+
+### Prerequisites
+
+- [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) installed and in `PATH`
+- [Node.js 20+](https://nodejs.org/) (for `npm install` when packaging Lambda)
+- A [Plaid account](https://dashboard.plaid.com/signup) (free sandbox)
+- An AWS account with an IAM user that has programmatic access
+
+**Minimum IAM permissions for the deployment user:**
+
+```
+AmazonS3FullAccess
+AWSCloudFormationFullAccess
+AWSLambda_FullAccess
+AmazonAPIGatewayAdministrator
+AmazonSSMFullAccess
+IAMFullAccess
+```
+
+### 1. Create `infra/.env`
+
+```bash
+cp infra/.env.template infra/.env
+# Edit infra/.env — fill in AWS credentials and Plaid keys
+```
+
+`infra/.env` is gitignored and will never be committed.
+
+### 2. Run setup (one time)
+
+```bash
+bash infra/scripts/setup.sh
+```
+
+This script:
+1. Creates an S3 bucket (`poarvault-lambda-{account}-{region}`) for Lambda zips
+2. Writes your Plaid credentials to SSM Parameter Store as `SecureString` (encrypted, free tier)
+3. Generates a random API key and stores it in SSM
+4. Packages the Lambda functions (`npm install` + zip)
+5. Deploys the CloudFormation stack (`poarvault`) — IAM role, 5 Lambdas, HTTP API Gateway
+
+At the end it prints:
+
+```
+POARVAULT_API_URL=https://xxx.execute-api.us-east-1.amazonaws.com
+POARVAULT_API_KEY=abc123...
+```
+
+Add both values to `local.properties`.
+
+### Subsequent deploys (after Lambda code changes)
+
+```bash
+bash infra/scripts/deploy.sh
+```
+
+### Retrieve outputs at any time
+
+```bash
+bash infra/scripts/get-outputs.sh
+```
+
+### Tear down
+
+```bash
+bash infra/scripts/destroy.sh
+```
+
+Deletes the CloudFormation stack and SSM parameters. The S3 bucket is retained — empty and delete it manually if you no longer need it.
+
+### Architecture
+
+```
+Android App
+    │  POST /link-token        (x-api-key header)
+    │  POST /exchange-token
+    │  POST /transactions
+    │  POST /balances
+    │  POST /disconnect
+    ▼
+HTTP API Gateway (AWS)
+    ▼
+AWS Lambda (Node.js 20, stateless)
+  Reads PLAID_CLIENT_ID + PLAID_SECRET from SSM at cold-start
+  Stores NOTHING
+    ▼
+Plaid API
+```
+
+All Plaid `access_token`s returned by `/exchange-token` are stored **encrypted on the Android device** (Android Keystore AES-256-GCM). Financial data (transactions, balances) lives in a local Room database. Nothing is persisted in AWS.
+
+---
+
 ## Data & Privacy
 
 - No user data is collected or transmitted beyond what Finnhub.io requires (your API key).

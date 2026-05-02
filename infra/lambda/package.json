@@ -1,0 +1,10 @@
+{
+  "name": "poarvault-lambda",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Stateless Plaid proxy — runs on AWS Lambda, stores nothing.",
+  "dependencies": {
+    "@aws-sdk/client-ssm": "^3.0.0",
+    "plaid": "^28.0.0"
+  }
+}

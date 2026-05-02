@@ -17,3 +17,6 @@ secrets/
 
 # Signing keystore — never commit to public repo
 keystore/
+
+# PoarVault backend — AWS credentials and Plaid secrets
+infra/.env
