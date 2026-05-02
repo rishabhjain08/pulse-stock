@@ -58,9 +58,13 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
     val currencyFmt = remember { NumberFormat.getCurrencyInstance(Locale.US) }
 
     val launcher = rememberLauncherForActivityResult(FastOpenPlaidLink()) { result ->
-        if (result is LinkSuccess) {
-            val institution = result.metadata.institution ?: return@rememberLauncherForActivityResult
-            vm.onLinkSuccess(result.publicToken, institution.id, institution.name)
+        when (result) {
+            is LinkSuccess -> {
+                val institution = result.metadata.institution
+                    ?: return@rememberLauncherForActivityResult
+                vm.onLinkSuccess(result.publicToken, institution.id, institution.name)
+            }
+            is LinkExit -> Unit  // user cancelled or error; Plaid SDK already showed its own error UI
         }
     }
 
