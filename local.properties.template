@@ -1,11 +1,21 @@
-# Copy this file to local.properties (which is gitignored) and fill in your key.
+# Copy this file to local.properties (which is gitignored) and fill in your keys.
 # local.properties is NEVER committed — the repo is public.
-#
+
+# Finnhub — streams real-time stock prices via WebSocket.
 # Get a free key at https://finnhub.io/
 FINNHUB_API_KEY=your_finnhub_api_key_here
 
-# PoarVault backend (populated by infra/scripts/get-outputs.sh after setup)
+# PoarVault — base URL for all 4 Lambda endpoints:
+#   POST /link-token       create a Plaid Link token to open the bank connection UI
+#   POST /exchange-token   exchange the public token from Plaid Link for a stored access token
+#   POST /balances         fetch current + available balances for all accounts at an institution
+#   POST /disconnect       remove a linked institution and revoke its Plaid access token
+#
+# Populated by running: node infra/scripts/get-outputs.js  (after deploying infra/)
 POARVAULT_API_URL=https://your-api-id.execute-api.us-east-1.amazonaws.com
+
+# API key that authenticates the Android app to the Lambda functions (x-api-key header).
+# Generated during infra setup and stored in AWS SSM — printed once by the setup script.
 POARVAULT_API_KEY=your_poarvault_api_key_here
 
 # Android SDK path (Android Studio fills this automatically)
