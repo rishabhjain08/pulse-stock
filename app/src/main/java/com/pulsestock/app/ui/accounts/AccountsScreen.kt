@@ -143,10 +143,13 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
                         SyncRow(isSyncing = state.isSyncing, onSync = vm::sync)
                     }
                     items(state.institutions, key = { it.institution.institutionId }) { iwa ->
+                        val id = iwa.institution.institutionId
                         InstitutionCard(
                             iwa = iwa,
                             currencyFmt = currencyFmt,
-                            onDisconnect = { vm.disconnect(iwa.institution.institutionId) },
+                            isSyncing = state.isSyncing || id in state.syncingIds,
+                            onSync = { vm.syncInstitution(id) },
+                            onDisconnect = { vm.disconnect(id) },
                         )
                     }
                 }
@@ -186,14 +189,19 @@ private fun SyncRow(isSyncing: Boolean, onSync: () -> Unit) {
 private fun InstitutionCard(
     iwa: InstitutionWithAccounts,
     currencyFmt: NumberFormat,
+    isSyncing: Boolean,
+    onSync: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
+    val lastSyncedMs = iwa.accounts.maxOfOrNull { it.lastRefreshed } ?: 0L
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Institution name + sync + disconnect
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
@@ -209,6 +217,20 @@ private fun InstitutionCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(start = 8.dp).weight(1f),
                 )
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(horizontal = 12.dp).size(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    IconButton(onClick = onSync) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Sync ${iwa.institution.name}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 IconButton(onClick = onDisconnect) {
                     Icon(
                         imageVector = Icons.Default.LinkOff,
@@ -217,6 +239,14 @@ private fun InstitutionCard(
                     )
                 }
             }
+
+            // Last sync time
+            Text(
+                text = "Last synced: ${formatSyncTime(lastSyncedMs)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 32.dp, bottom = 4.dp),
+            )
 
             if (iwa.accounts.isNotEmpty()) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -228,6 +258,17 @@ private fun InstitutionCard(
                 }
             }
         }
+    }
+}
+
+private fun formatSyncTime(timestamp: Long): String {
+    if (timestamp == 0L) return "Never"
+    val diff = System.currentTimeMillis() - timestamp
+    return when {
+        diff < 60_000L -> "Just now"
+        diff < 3_600_000L -> "${diff / 60_000}m ago"
+        diff < 86_400_000L -> "${diff / 3_600_000}h ago"
+        else -> "${diff / 86_400_000}d ago"
     }
 }
 

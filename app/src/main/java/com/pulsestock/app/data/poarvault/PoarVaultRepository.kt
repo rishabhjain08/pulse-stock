@@ -29,7 +29,7 @@ class PoarVaultRepository(
         db.dao().deleteInstitution(institutionId)
     }
 
-    private suspend fun refreshInstitution(institutionId: String) {
+    suspend fun refreshInstitution(institutionId: String) {
         val token = tokens.getAccessToken(institutionId) ?: return
         val balances = api.getBalances(token)
         val accounts = balances.accounts.map { a ->

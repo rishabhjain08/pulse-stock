@@ -21,6 +21,7 @@ data class AccountsUiState(
     val institutions: List<InstitutionWithAccounts> = emptyList(),
     val isInitialLoad: Boolean = true,
     val isSyncing: Boolean = false,
+    val syncingIds: Set<String> = emptySet(),
     val error: String? = null,
 )
 
@@ -83,6 +84,19 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 _uiState.value = _uiState.value.copy(error = "Sync failed: ${e.message}")
             } finally {
                 _uiState.value = _uiState.value.copy(isSyncing = false)
+            }
+        }
+    }
+
+    fun syncInstitution(institutionId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(syncingIds = _uiState.value.syncingIds + institutionId)
+            try {
+                repo.refreshInstitution(institutionId)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = "Sync failed: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(syncingIds = _uiState.value.syncingIds - institutionId)
             }
         }
     }
