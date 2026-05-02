@@ -76,7 +76,7 @@ fun HUDContent(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(connectionDotColor(connectionState))
+                            .background(connectionDotColor(connectionState, symbols))
                     )
                     Spacer(Modifier.width(8.dp))
 
@@ -89,7 +89,7 @@ fun HUDContent(
                     )
 
                     Text(
-                        text     = connectionLabel(connectionState, lastRefreshMs),
+                        text     = connectionLabel(connectionState, lastRefreshMs, symbols),
                         fontSize = 11.sp,
                         color    = PulseSubtext
                     )
@@ -127,22 +127,41 @@ fun HUDContent(
     }
 }
 
-private fun connectionDotColor(state: StockStreamManager.ConnectionState): Color = when (state) {
-    is StockStreamManager.ConnectionState.Connected    -> PulseGreen
-    is StockStreamManager.ConnectionState.Connecting   -> Color(0xFFFFA500)
-    is StockStreamManager.ConnectionState.Error        -> PulseRed
-    is StockStreamManager.ConnectionState.Disconnected -> Color.LightGray
+private fun connectionDotColor(
+    state: StockStreamManager.ConnectionState,
+    symbols: List<String>
+): Color = when {
+    // Indian-only watchlist has no WebSocket — amber signals "live but delayed"
+    state is StockStreamManager.ConnectionState.Disconnected && symbols.all { isIndian(it) } ->
+        Color(0xFFFFA500)
+    else -> when (state) {
+        is StockStreamManager.ConnectionState.Connected    -> PulseGreen
+        is StockStreamManager.ConnectionState.Connecting   -> Color(0xFFFFA500)
+        is StockStreamManager.ConnectionState.Error        -> PulseRed
+        is StockStreamManager.ConnectionState.Disconnected -> Color.LightGray
+    }
 }
 
 private fun connectionLabel(
     state: StockStreamManager.ConnectionState,
-    lastRefreshMs: Long
-): String = when (state) {
-    is StockStreamManager.ConnectionState.Connected    -> "Live"
-    is StockStreamManager.ConnectionState.Connecting   -> "Connecting…"
-    is StockStreamManager.ConnectionState.Error        -> staleLabel(lastRefreshMs) ?: "Reconnecting…"
-    is StockStreamManager.ConnectionState.Disconnected -> staleLabel(lastRefreshMs) ?: "Offline"
+    lastRefreshMs: Long,
+    symbols: List<String>
+): String {
+    val allIndian = symbols.isNotEmpty() && symbols.all { isIndian(it) }
+    val anyIndian = symbols.any { isIndian(it) }
+    return when (state) {
+        is StockStreamManager.ConnectionState.Connected ->
+            if (anyIndian) "Live · 15s" else "Live"
+        is StockStreamManager.ConnectionState.Connecting   -> "Connecting…"
+        is StockStreamManager.ConnectionState.Error        -> staleLabel(lastRefreshMs) ?: "Reconnecting…"
+        is StockStreamManager.ConnectionState.Disconnected ->
+            if (allIndian && lastRefreshMs > 0) "Live · 15s"
+            else staleLabel(lastRefreshMs) ?: "Offline"
+    }
 }
+
+private fun isIndian(symbol: String) =
+    symbol.substringBefore(":") in setOf("NSE", "BSE")
 
 private fun staleLabel(lastRefreshMs: Long): String? {
     if (lastRefreshMs == 0L) return null
