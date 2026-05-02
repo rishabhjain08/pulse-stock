@@ -1,0 +1,19 @@
+{
+  "name": "poarvault-infra",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Setup scripts for PoarVault AWS backend. Requires Node.js 20+.",
+  "scripts": {
+    "setup":   "node scripts/setup.js",
+    "deploy":  "node scripts/deploy.js",
+    "destroy": "node scripts/destroy.js",
+    "outputs": "node scripts/get-outputs.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudformation": "^3.0.0",
+    "@aws-sdk/client-s3":             "^3.0.0",
+    "@aws-sdk/client-ssm":            "^3.0.0",
+    "@aws-sdk/client-sts":            "^3.0.0",
+    "dotenv":                         "^16.0.0"
+  }
+}

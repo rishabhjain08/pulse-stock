@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Green rounded square background -->
+  <rect width="512" height="512" rx="110" fill="#00C805"/>
+
+  <!-- ECG / pulse line, white, centered -->
+  <polyline
+    points="60,256 160,256 200,256 230,140 265,360 295,256 350,256 452,256"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="34"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

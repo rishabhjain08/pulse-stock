@@ -221,8 +221,7 @@ PoarVault is the financial "slice and dice" feature inside PulseStock. It connec
 
 ### Prerequisites
 
-- [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) installed and in `PATH`
-- [Node.js 20+](https://nodejs.org/) (for `npm install` when packaging Lambda)
+- [Node.js 20+](https://nodejs.org/) — used for both setup scripts and Lambda code
 - A [Plaid account](https://dashboard.plaid.com/signup) (free sandbox)
 - An AWS account with an IAM user that has programmatic access
 
@@ -246,10 +245,12 @@ cp infra/.env.template infra/.env
 
 `infra/.env` is gitignored and will never be committed.
 
-### 2. Run setup (one time)
+### 2. Install setup dependencies and run setup (one time)
 
 ```bash
-bash infra/scripts/setup.sh
+cd infra
+npm install        # installs AWS SDK for the setup scripts (separate from Lambda deps)
+npm run setup      # or: node scripts/setup.js
 ```
 
 This script:
@@ -271,19 +272,19 @@ Add both values to `local.properties`.
 ### Subsequent deploys (after Lambda code changes)
 
 ```bash
-bash infra/scripts/deploy.sh
+cd infra && npm run deploy
 ```
 
 ### Retrieve outputs at any time
 
 ```bash
-bash infra/scripts/get-outputs.sh
+cd infra && npm run outputs
 ```
 
 ### Tear down
 
 ```bash
-bash infra/scripts/destroy.sh
+cd infra && npm run destroy
 ```
 
 Deletes the CloudFormation stack and SSM parameters. The S3 bucket is retained — empty and delete it manually if you no longer need it.

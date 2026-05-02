@@ -20,3 +20,4 @@ keystore/
 
 # PoarVault backend — AWS credentials and Plaid secrets
 infra/.env
+infra/node_modules/
