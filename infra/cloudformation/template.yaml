@@ -3,23 +3,21 @@ Description: >
   PoarVault — stateless Plaid proxy.
   5 Lambda functions behind an HTTP API Gateway.
   Stores NOTHING. All Plaid secrets live in SSM Parameter Store.
+  Requires the poarvault-bootstrap stack to be deployed first.
 
 Parameters:
-  LambdaS3Bucket:
-    Type: String
-    Description: S3 bucket containing the Lambda deployment zip
   LambdaS3Key:
     Type: String
-    Description: S3 key of the Lambda zip (e.g. lambda-1234567890.zip)
+    Description: S3 key of the Lambda zip uploaded by deploy.sh (e.g. lambda-1234567890.zip)
 
 Resources:
 
   # ── IAM ────────────────────────────────────────────────────────────────────
 
-  LambdaRole:
+  LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: poarvault-lambda-role
+      RoleName: poarvault-lambda-execution-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -30,7 +28,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: SSMReadPoarVault
+        - PolicyName: poarvault-ssm-read
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -40,31 +38,31 @@ Resources:
 
   # ── Lambda log groups (90-day retention) ───────────────────────────────────
 
-  LogLinkToken:
+  LogGroupLinkToken:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/poarvault-link-token
       RetentionInDays: 90
 
-  LogExchangeToken:
+  LogGroupExchangeToken:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/poarvault-exchange-token
       RetentionInDays: 90
 
-  LogTransactions:
+  LogGroupTransactions:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/poarvault-transactions
       RetentionInDays: 90
 
-  LogBalances:
+  LogGroupBalances:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/poarvault-balances
       RetentionInDays: 90
 
-  LogDisconnect:
+  LogGroupDisconnect:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/poarvault-disconnect
@@ -72,79 +70,79 @@ Resources:
 
   # ── Lambda functions ────────────────────────────────────────────────────────
 
-  FnLinkToken:
+  LambdaLinkToken:
     Type: AWS::Lambda::Function
-    DependsOn: LogLinkToken
+    DependsOn: LogGroupLinkToken
     Properties:
       FunctionName: poarvault-link-token
       Runtime: nodejs20.x
       Handler: link-token.handler
-      Role: !GetAtt LambdaRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: 256
       Timeout: 10
       Code:
-        S3Bucket: !Ref LambdaS3Bucket
+        S3Bucket: !ImportValue poarvault-artifact-bucket
         S3Key: !Ref LambdaS3Key
 
-  FnExchangeToken:
+  LambdaExchangeToken:
     Type: AWS::Lambda::Function
-    DependsOn: LogExchangeToken
+    DependsOn: LogGroupExchangeToken
     Properties:
       FunctionName: poarvault-exchange-token
       Runtime: nodejs20.x
       Handler: exchange-token.handler
-      Role: !GetAtt LambdaRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: 256
       Timeout: 10
       Code:
-        S3Bucket: !Ref LambdaS3Bucket
+        S3Bucket: !ImportValue poarvault-artifact-bucket
         S3Key: !Ref LambdaS3Key
 
-  FnTransactions:
+  LambdaTransactions:
     Type: AWS::Lambda::Function
-    DependsOn: LogTransactions
+    DependsOn: LogGroupTransactions
     Properties:
       FunctionName: poarvault-transactions
       Runtime: nodejs20.x
       Handler: transactions.handler
-      Role: !GetAtt LambdaRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: 256
       Timeout: 30
       Code:
-        S3Bucket: !Ref LambdaS3Bucket
+        S3Bucket: !ImportValue poarvault-artifact-bucket
         S3Key: !Ref LambdaS3Key
 
-  FnBalances:
+  LambdaBalances:
     Type: AWS::Lambda::Function
-    DependsOn: LogBalances
+    DependsOn: LogGroupBalances
     Properties:
       FunctionName: poarvault-balances
       Runtime: nodejs20.x
       Handler: balances.handler
-      Role: !GetAtt LambdaRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: 256
       Timeout: 15
       Code:
-        S3Bucket: !Ref LambdaS3Bucket
+        S3Bucket: !ImportValue poarvault-artifact-bucket
         S3Key: !Ref LambdaS3Key
 
-  FnDisconnect:
+  LambdaDisconnect:
     Type: AWS::Lambda::Function
-    DependsOn: LogDisconnect
+    DependsOn: LogGroupDisconnect
     Properties:
       FunctionName: poarvault-disconnect
       Runtime: nodejs20.x
       Handler: disconnect.handler
-      Role: !GetAtt LambdaRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: 256
       Timeout: 10
       Code:
-        S3Bucket: !Ref LambdaS3Bucket
+        S3Bucket: !ImportValue poarvault-artifact-bucket
         S3Key: !Ref LambdaS3Key
 
   # ── HTTP API Gateway ────────────────────────────────────────────────────────
 
-  Api:
+  HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
       Name: poarvault-api
@@ -159,53 +157,53 @@ Resources:
           - content-type
           - x-api-key
 
-  ApiStage:
+  HttpApiDefaultStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       StageName: "$default"
       AutoDeploy: true
 
-  # ── Integrations ────────────────────────────────────────────────────────────
+  # ── Lambda integrations ─────────────────────────────────────────────────────
 
-  IntLinkToken:
+  IntegrationLinkToken:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt FnLinkToken.Arn
+      IntegrationUri: !GetAtt LambdaLinkToken.Arn
       PayloadFormatVersion: '2.0'
 
-  IntExchangeToken:
+  IntegrationExchangeToken:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt FnExchangeToken.Arn
+      IntegrationUri: !GetAtt LambdaExchangeToken.Arn
       PayloadFormatVersion: '2.0'
 
-  IntTransactions:
+  IntegrationTransactions:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt FnTransactions.Arn
+      IntegrationUri: !GetAtt LambdaTransactions.Arn
       PayloadFormatVersion: '2.0'
 
-  IntBalances:
+  IntegrationBalances:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt FnBalances.Arn
+      IntegrationUri: !GetAtt LambdaBalances.Arn
       PayloadFormatVersion: '2.0'
 
-  IntDisconnect:
+  IntegrationDisconnect:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt FnDisconnect.Arn
+      IntegrationUri: !GetAtt LambdaDisconnect.Arn
       PayloadFormatVersion: '2.0'
 
   # ── Routes ──────────────────────────────────────────────────────────────────
@@ -213,83 +211,83 @@ Resources:
   RouteLinkToken:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       RouteKey: POST /link-token
-      Target: !Sub 'integrations/${IntLinkToken}'
+      Target: !Sub 'integrations/${IntegrationLinkToken}'
 
   RouteExchangeToken:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       RouteKey: POST /exchange-token
-      Target: !Sub 'integrations/${IntExchangeToken}'
+      Target: !Sub 'integrations/${IntegrationExchangeToken}'
 
   RouteTransactions:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       RouteKey: POST /transactions
-      Target: !Sub 'integrations/${IntTransactions}'
+      Target: !Sub 'integrations/${IntegrationTransactions}'
 
   RouteBalances:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       RouteKey: POST /balances
-      Target: !Sub 'integrations/${IntBalances}'
+      Target: !Sub 'integrations/${IntegrationBalances}'
 
   RouteDisconnect:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref Api
+      ApiId: !Ref HttpApi
       RouteKey: POST /disconnect
-      Target: !Sub 'integrations/${IntDisconnect}'
+      Target: !Sub 'integrations/${IntegrationDisconnect}'
 
-  # ── Lambda permissions for API Gateway ─────────────────────────────────────
+  # ── Lambda invoke permissions for API Gateway ───────────────────────────────
 
-  PermLinkToken:
+  InvokePermissionLinkToken:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt FnLinkToken.Arn
+      FunctionName: !GetAtt LambdaLinkToken.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
-  PermExchangeToken:
+  InvokePermissionExchangeToken:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt FnExchangeToken.Arn
+      FunctionName: !GetAtt LambdaExchangeToken.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
-  PermTransactions:
+  InvokePermissionTransactions:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt FnTransactions.Arn
+      FunctionName: !GetAtt LambdaTransactions.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
-  PermBalances:
+  InvokePermissionBalances:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt FnBalances.Arn
+      FunctionName: !GetAtt LambdaBalances.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
-  PermDisconnect:
+  InvokePermissionDisconnect:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt FnDisconnect.Arn
+      FunctionName: !GetAtt LambdaDisconnect.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
 
 Outputs:
   ApiUrl:
     Description: PoarVault API base URL — add to local.properties as POARVAULT_API_URL
-    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com'
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
     Export:
-      Name: PoarVaultApiUrl
+      Name: poarvault-api-url

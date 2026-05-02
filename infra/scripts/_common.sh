@@ -12,7 +12,6 @@ load_env() {
     echo "       Copy infra/.env.template to infra/.env and fill in values." >&2
     exit 1
   fi
-  # Export every variable defined in .env
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
@@ -23,11 +22,11 @@ load_env() {
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION
 }
 
-account_id() {
-  aws sts get-caller-identity --query Account --output text
-}
-
-# Bucket name is deterministic: no manual configuration needed.
-s3_bucket() {
-  echo "poarvault-lambda-$(account_id)-${AWS_REGION}"
+# Read the artifact bucket name from the bootstrap stack output.
+artifact_bucket() {
+  aws cloudformation describe-stacks \
+    --stack-name poarvault-bootstrap \
+    --query 'Stacks[0].Outputs[?OutputKey==`ArtifactBucketName`].OutputValue' \
+    --output text \
+    --region "$AWS_REGION"
 }

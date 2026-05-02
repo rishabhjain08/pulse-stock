@@ -253,11 +253,11 @@ bash infra/scripts/setup.sh
 ```
 
 This script:
-1. Creates an S3 bucket (`poarvault-lambda-{account}-{region}`) for Lambda zips
-2. Writes your Plaid credentials to SSM Parameter Store as `SecureString` (encrypted, free tier)
-3. Generates a random API key and stores it in SSM
-4. Packages the Lambda functions (`npm install` + zip)
-5. Deploys the CloudFormation stack (`poarvault`) — IAM role, 5 Lambdas, HTTP API Gateway
+1. Writes your Plaid credentials to SSM Parameter Store as `SecureString` (encrypted, free tier)
+2. Generates a random API key and stores it in SSM
+3. Deploys the **bootstrap** CF stack (`poarvault-bootstrap`) — creates the S3 artifact bucket
+4. Packages the Lambda functions (`npm install` + zip) and uploads to S3
+5. Deploys the **main** CF stack (`poarvault`) — IAM role, 5 Lambdas, HTTP API Gateway
 
 At the end it prints:
 

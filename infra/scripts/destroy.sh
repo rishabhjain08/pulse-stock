@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Delete the CloudFormation stack and all SSM parameters.
-# The S3 bucket is intentionally NOT deleted — empty it manually if desired.
+# Delete both CloudFormation stacks and all SSM parameters.
+# The S3 artifact bucket has DeletionPolicy: Retain — empty and delete it manually.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,14 +11,22 @@ load_env
 
 REGION="$AWS_REGION"
 
-echo "WARNING: This deletes the PoarVault stack and all /poarvault SSM parameters."
+echo "WARNING: This deletes the poarvault and poarvault-bootstrap stacks and all /poarvault SSM parameters."
 read -rp "Type 'yes' to confirm: " confirm
 [[ "$confirm" == "yes" ]] || { echo "Aborted."; exit 0; }
 
-echo "==> Deleting CloudFormation stack"
+# Read bucket name before deleting the bootstrap stack
+BUCKET="$(artifact_bucket 2>/dev/null || echo "")"
+
+echo "==> Deleting main stack (poarvault)"
 aws cloudformation delete-stack --stack-name poarvault --region "$REGION" --no-cli-pager
 aws cloudformation wait stack-delete-complete --stack-name poarvault --region "$REGION"
 echo "    Done"
+
+echo "==> Deleting bootstrap stack (poarvault-bootstrap)"
+aws cloudformation delete-stack --stack-name poarvault-bootstrap --region "$REGION" --no-cli-pager
+aws cloudformation wait stack-delete-complete --stack-name poarvault-bootstrap --region "$REGION"
+echo "    Done (bucket retained by DeletionPolicy: Retain)"
 
 echo "==> Deleting SSM parameters"
 for param in \
@@ -34,5 +42,8 @@ for param in \
 done
 
 echo ""
-echo "==> Done. S3 bucket retained — delete it manually if you no longer need it."
-echo "    Bucket: poarvault-lambda-$(account_id)-${REGION}"
+echo "==> Done."
+if [[ -n "$BUCKET" ]]; then
+  echo "    S3 bucket retained: $BUCKET"
+  echo "    Empty it and delete manually: aws s3 rb s3://$BUCKET --force"
+fi

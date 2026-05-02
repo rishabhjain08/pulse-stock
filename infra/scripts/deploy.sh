@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Re-package Lambda code and update the CloudFormation stack.
-# Run after any Lambda code change.
+# Re-package Lambda code and update the main CloudFormation stack.
+# Run after any change to infra/lambda/.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,9 +10,9 @@ source "$SCRIPT_DIR/_common.sh"
 load_env
 
 REGION="$AWS_REGION"
-BUCKET="$(s3_bucket)"
 LAMBDA_DIR="$INFRA_DIR/lambda"
-CF_TEMPLATE="$INFRA_DIR/cloudformation/template.yaml"
+
+BUCKET="$(artifact_bucket)"
 
 echo "==> Packaging Lambda"
 cd "$LAMBDA_DIR"
@@ -25,14 +25,12 @@ aws s3 cp "$ZIP_PATH" "s3://${BUCKET}/${ZIP_KEY}" --region "$REGION" --no-cli-pa
 echo "    Uploaded s3://${BUCKET}/${ZIP_KEY}"
 rm -f "$ZIP_PATH"
 
-echo "==> Updating CloudFormation stack (poarvault)"
+echo "==> Updating main stack (poarvault)"
 aws cloudformation deploy \
-  --template-file "$CF_TEMPLATE" \
+  --template-file "$INFRA_DIR/cloudformation/template.yaml" \
   --stack-name poarvault \
   --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-    LambdaS3Bucket="$BUCKET" \
-    LambdaS3Key="$ZIP_KEY" \
+  --parameter-overrides LambdaS3Key="$ZIP_KEY" \
   --region "$REGION" \
   --no-cli-pager
 

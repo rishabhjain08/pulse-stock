@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  PoarVault bootstrap — S3 bucket for Lambda deployment artifacts.
+  Deploy this stack once before the main stack. The bucket is retained on
+  stack deletion so zip history is never accidentally destroyed.
+
+Resources:
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'poarvault-artifacts-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldZips
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+
+Outputs:
+  ArtifactBucketName:
+    Description: S3 bucket for Lambda deployment zips — referenced by the main stack
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: poarvault-artifact-bucket
