@@ -16,6 +16,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jfrog.plaid.com/artifactory/plaid-sdk-android-production") }
     }
 }
 

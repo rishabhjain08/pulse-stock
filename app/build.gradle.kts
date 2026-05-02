@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.services)
     alias(libs.plugins.firebase.crashlytics)
+    alias(libs.plugins.ksp)
 }
 
 // Load API key: local.properties for dev, env var for CI
@@ -17,6 +18,12 @@ val localProps = Properties().also { props ->
 }
 val finnhubApiKey: String = localProps.getProperty("FINNHUB_API_KEY")
     ?: System.getenv("FINNHUB_API_KEY")
+    ?: ""
+val poarvaultApiUrl: String = localProps.getProperty("POARVAULT_API_URL")
+    ?: System.getenv("POARVAULT_API_URL")
+    ?: ""
+val poarvaultApiKey: String = localProps.getProperty("POARVAULT_API_KEY")
+    ?: System.getenv("POARVAULT_API_KEY")
     ?: ""
 
 android {
@@ -33,6 +40,8 @@ android {
         versionName = "1.0"
 
         buildConfigField("String", "FINNHUB_API_KEY", "\"$finnhubApiKey\"")
+        buildConfigField("String", "POARVAULT_API_URL", "\"$poarvaultApiUrl\"")
+        buildConfigField("String", "POARVAULT_API_KEY", "\"$poarvaultApiKey\"")
     }
 
     signingConfigs {
@@ -112,6 +121,12 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation("sh.calvin.reorderable:reorderable-android:2.5.1")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.sqlcipher)
+    implementation(libs.plaid.link)
     debugImplementation(libs.androidx.ui.tooling)
 
     // Force profileinstaller 1.4.1 — 1.3.x crashes on Android 16 with NoSuchMethodError

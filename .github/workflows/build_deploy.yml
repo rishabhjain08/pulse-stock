@@ -7,6 +7,8 @@ name: Build & Deploy to Play Store Internal Track
 #
 # 2. Add these repository SECRETS:
 #      FINNHUB_API_KEY              Your Finnhub.io API key
+#      POARVAULT_API_URL            PoarVault Lambda base URL (from: node infra/scripts/get-outputs.js)
+#      POARVAULT_API_KEY            PoarVault API key        (from: node infra/scripts/get-outputs.js)
 #      GOOGLE_SERVICES_JSON         Contents of google-services.json from Firebase console
 #      KEYSTORE_BASE64              base64-encoded release keystore (see README for keytool cmd)
 #      KEYSTORE_PASSWORD            Keystore password
@@ -74,6 +76,8 @@ jobs:
       - name: Build signed release AAB
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          POARVAULT_API_URL: ${{ secrets.POARVAULT_API_URL }}
+          POARVAULT_API_KEY: ${{ secrets.POARVAULT_API_KEY }}
           KEYSTORE_PATH: ../keystore/pulsestock.keystore
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}

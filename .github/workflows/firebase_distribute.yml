@@ -7,6 +7,8 @@ name: Build & Distribute via Firebase App Distribution
 #
 # 2. Add these repository SECRETS:
 #      FINNHUB_API_KEY              Your Finnhub.io API key
+#      POARVAULT_API_URL            PoarVault Lambda base URL (from: node infra/scripts/get-outputs.js)
+#      POARVAULT_API_KEY            PoarVault API key        (from: node infra/scripts/get-outputs.js)
 #      GOOGLE_SERVICES_JSON         Contents of google-services.json from Firebase console
 #      FIREBASE_APP_ID              Firebase app ID  (format: 1:xxx:android:xxx)
 #      FIREBASE_SERVICE_ACCOUNT_JSON  Firebase service account key JSON
@@ -62,6 +64,8 @@ jobs:
       - name: Build debug APK
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          POARVAULT_API_URL: ${{ secrets.POARVAULT_API_URL }}
+          POARVAULT_API_KEY: ${{ secrets.POARVAULT_API_KEY }}
         run: gradle assembleInternalDebug --build-cache --parallel --no-daemon
 
       - name: Distribute to Firebase App Distribution

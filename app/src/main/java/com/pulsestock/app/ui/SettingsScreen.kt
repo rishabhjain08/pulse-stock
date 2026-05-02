@@ -113,7 +113,7 @@ private val OffSurface  = Color(0xFFF3F4F6)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(modifier: Modifier = Modifier) {
     val context  = LocalContext.current
     val prefs    = remember { StockPreferences(context) }
     val scope    = rememberCoroutineScope()
@@ -236,7 +236,7 @@ fun SettingsScreen() {
     val bringIntoView = remember { BringIntoViewRequester() }
 
     Scaffold(
-        modifier = Modifier.imePadding(),   // shrinks Scaffold+SnackbarHost above keyboard
+        modifier = modifier.imePadding(),   // shrinks Scaffold+SnackbarHost above keyboard
         topBar = {
             TopAppBar(
                 title = { Text("PulseStock", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = PulseText) },
