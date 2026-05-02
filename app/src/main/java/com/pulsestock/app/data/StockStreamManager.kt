@@ -42,6 +42,7 @@ class StockStreamManager {
     sealed class ConnectionState {
         object Connecting   : ConnectionState()
         object Connected    : ConnectionState()
+        object Polling      : ConnectionState()  // REST-only mode (no WebSocket, e.g. Indian stocks)
         object Disconnected : ConnectionState()
         data class Error(val message: String) : ConnectionState()
     }
@@ -112,9 +113,11 @@ class StockStreamManager {
                 }
             }
 
-            // WebSocket for US/crypto; if only Indian symbols, parent waits for the polling child
             if (wsSymbols.isNotEmpty()) {
                 connectLoop(wsSymbols)
+            } else {
+                // Indian-only watchlist — REST polling is the only data source
+                _connectionState.value = ConnectionState.Polling
             }
         }
     }
