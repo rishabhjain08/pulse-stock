@@ -50,42 +50,58 @@ cd pulse-stock
 
 ### 2. Add your Finnhub API key
 
-Create `local.properties` at the project root (it is gitignored and will never be committed):
+The app streams stock prices from Finnhub.io. A free API key is required — it's the credential Finnhub uses to track your usage against the free-tier limits (60 calls/min, unlimited WebSocket symbols).
+
+Create `local.properties` at the project root:
 
 ```properties
 FINNHUB_API_KEY=your_finnhub_api_key_here
 sdk.dir=/path/to/your/android/sdk
 ```
 
-A template is provided at [`local.properties.template`](local.properties.template).
+**Why `local.properties` and not directly in code?** This repo is public. Any key committed to source is permanently exposed (even if later deleted — git history is forever). `local.properties` is listed in `.gitignore` so it is never committed. The build system reads it at compile time via `System.getenv()` in `build.gradle.kts` and injects it as a `BuildConfig` field.
+
+A template with all expected keys is provided at [`local.properties.template`](local.properties.template).
 
 ### 3. Add google-services.json
 
-Download `google-services.json` from your [Firebase console](https://console.firebase.google.com/) and place it at:
+Firebase is used for crash reporting and CI app distribution. Each Firebase project has a unique `google-services.json` that tells the Android SDK which project to connect to.
+
+Download it from your [Firebase console](https://console.firebase.google.com/) (Project settings → Your apps → Download `google-services.json`) and place it at:
 
 ```
 app/google-services.json
 ```
 
-This file is gitignored and will never be committed.
+**Why not committed?** The file contains your Firebase project ID and API keys. Committing it would expose your Firebase project to abuse (quota exhaustion, unauthorized data access). It is gitignored.
+
+> If you don't have a Firebase project, create one at [console.firebase.google.com](https://console.firebase.google.com/), add an Android app with package name `com.pulsestock.app`, and download the file.
 
 ### 4. Open in Android Studio
 
-Open the project root in Android Studio. Let it sync Gradle, then run on a connected S25 (or any Android 16 device/emulator).
+Open the project root in Android Studio. Let Gradle sync (it downloads all dependencies declared in `build.gradle.kts`). Then run on a connected S25 or any Android 16 device/emulator.
+
+**Why Android Studio?** It handles the Gradle toolchain, JDK version pinning, and ADB device connection automatically. Building from the command line is also possible (`./gradlew assembleDebug`) but Studio is the recommended path for first-time setup.
 
 ### 5. Grant permissions on device
 
-The app will prompt for two permissions on first launch:
+The app requests two permissions on first launch — both are required for the core HUD feature:
 
-- **Appear on top** (`SYSTEM_ALERT_WINDOW`) — required for the floating overlay
-- **Post notifications** — required for the foreground service and Now Bar chip
+- **Appear on top** (`SYSTEM_ALERT_WINDOW`) — Android requires this special permission for any app that draws a floating window over other apps. Without it, the overlay cannot be shown.
+- **Post notifications** (`POST_NOTIFICATIONS`) — Required since Android 13 for any app running a foreground service. The HUD runs as a foreground service so Android doesn't kill it while you're using other apps; the notification is the system's way of making that service visible to the user.
+
+Both prompts open the relevant system settings screen directly. Grant them and return to the app.
 
 ### 6. Add the Quick Settings tile
 
-1. Pull down the notification shade twice
-2. Tap the pencil / edit icon
-3. Find **PulseStock** and drag it into your active tiles
-4. Tap it to start the HUD
+The HUD is toggled from Quick Settings (the panel that appears when you swipe down twice), not from an app launcher icon. You need to add the PulseStock tile once:
+
+1. Pull down the notification shade twice to open Quick Settings
+2. Tap the **pencil / edit** icon at the bottom
+3. Find **PulseStock** in the inactive tiles list and drag it into your active tiles
+4. Tap it to start the HUD — a floating overlay will appear
+
+**Why Quick Settings?** It gives one-tap access to the HUD from anywhere, without unlocking or navigating to the app. The tile also shows live status (active/inactive) so you always know if the service is running.
 
 ---
 
@@ -136,9 +152,9 @@ Two independent deployment pipelines are available. Set up whichever suits your 
 
 Builds that only change documentation or non-build files are skipped automatically on both pipelines.
 
----
+Each pipeline is gated by a **repository variable** (not a secret). Set the variable to `true` to enable a pipeline, leave it unset or `false` to disable it.
 
-Each pipeline is gated by a **repository variable** (not a secret). Set the variable to `true` to enable a pipeline, leave it unset or `false` to disable it. This lets you enable one or both without changing any code.
+**Why a variable and not a secret?** Variables are visible in the GitHub Actions UI, making it easy to see at a glance which pipelines are active. Secrets are for sensitive values only; an on/off flag isn't sensitive.
 
 **Settings → Secrets and variables → Actions → Variables tab:**
 
@@ -155,17 +171,18 @@ Builds a **debug APK** and delivers it directly to testers via Firebase App Dist
 
 **Enable:** Set repository variable `ENABLE_FIREBASE_DISTRIBUTION = true`
 
-**Required secrets:**
+**Required secrets** — these go in **Settings → Secrets and variables → Actions → Secrets tab:**
 
-| Secret | Where to get it |
-|---|---|
-| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard |
-| `GOOGLE_SERVICES_JSON` | Firebase console → Project settings → `google-services.json` |
-| `FIREBASE_APP_ID` | Firebase console → Project settings → Your apps → App ID (`1:xxx:android:xxx`) |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase console → Project settings → Service accounts → Generate key (grant **Firebase App Distribution Admin** role in Google Cloud IAM) |
+| Secret | Where to get it | Why it's needed |
+|---|---|---|
+| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard | Baked into the APK at build time via `BuildConfig`; never hardcoded in source |
+| `GOOGLE_SERVICES_JSON` | Firebase console → Project settings → `google-services.json` | CI doesn't have access to your local file; the secret injects it during the build |
+| `FIREBASE_APP_ID` | Firebase console → Project settings → Your apps → App ID (`1:xxx:android:xxx`) | Tells the Firebase CLI which app to distribute to |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase console → Project settings → Service accounts → Generate key | Authenticates CI to Firebase without exposing your personal Google account credentials |
 
-**Firebase setup:**
-- Create a tester group named exactly `internal-testers` in **App Distribution → Testers & Groups**
+**One-time Firebase setup:**
+- Grant the service account the **Firebase App Distribution Admin** role in Google Cloud IAM
+- Create a tester group named exactly `internal-testers` in **App Distribution → Testers & Groups** — the workflow targets this group by name
 
 ---
 
@@ -175,6 +192,8 @@ Builds a **signed release AAB** and publishes it to the Play Store internal test
 
 **Enable:** Set repository variable `ENABLE_PLAY_STORE_DEPLOY = true`
 
+**Why a signed AAB?** The Play Store requires all uploads to be signed with a consistent release keystore. The keystore proves that future app updates come from the same publisher. Lose the keystore and you can never update the app on the Play Store — keep it safe.
+
 **One-time keystore generation (run locally, keep the file safe):**
 ```bash
 keytool -genkey -v \
@@ -182,92 +201,138 @@ keytool -genkey -v \
   -alias pulsestock \
   -keyalg RSA -keysize 2048 -validity 10000
 
-# Encode for GitHub Secrets (macOS)
+# Base64-encode it so it can be stored as a GitHub Secret (macOS)
 base64 -i pulsestock.keystore | pbcopy
+# Linux: base64 pulsestock.keystore | xclip -selection clipboard
 ```
 
 **Required secrets:**
 
-| Secret | Where to get it |
-|---|---|
-| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard |
-| `GOOGLE_SERVICES_JSON` | Firebase console → `google-services.json` |
-| `KEYSTORE_BASE64` | Base64-encoded keystore file (command above) |
-| `KEYSTORE_PASSWORD` | Password chosen during `keytool` |
-| `KEY_ALIAS` | `pulsestock` (or whatever alias you chose) |
-| `KEY_PASSWORD` | Key password (can match keystore password) |
-| `PLAY_SERVICE_ACCOUNT_JSON` | Play Console → Setup → API access → Create service account → download JSON key |
+| Secret | Where to get it | Why it's needed |
+|---|---|---|
+| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard | Baked into the release build at compile time |
+| `GOOGLE_SERVICES_JSON` | Firebase console → `google-services.json` | Same reason as Option A |
+| `KEYSTORE_BASE64` | Base64 output of the command above | CI needs the keystore to sign the AAB; base64 encoding lets it be stored as a text secret |
+| `KEYSTORE_PASSWORD` | Password chosen during `keytool` | Unlocks the keystore file |
+| `KEY_ALIAS` | `pulsestock` (or whatever alias you chose) | Identifies which key within the keystore to sign with |
+| `KEY_PASSWORD` | Key password (can match keystore password) | Unlocks the individual key within the keystore |
+| `PLAY_SERVICE_ACCOUNT_JSON` | Play Console → Setup → API access → Create service account → download JSON key | Authenticates CI to the Play Store without your personal Google account |
 
-**Play Console service account permissions (grant exactly these two, nothing else):**
-- ✅ **Release apps to testing tracks** — lets CI upload the AAB and create releases
-- ✅ **View app information and download bulk reports (read-only)** — required base permission for the API
+**Play Console service account permissions — grant exactly these two, nothing else:**
+- ✅ **Release apps to testing tracks** — lets CI upload the AAB and create a release
+- ✅ **View app information and download bulk reports (read-only)** — base permission the API requires
 
-Do not grant Admin, "Release to production", or any financial/store presence permissions to the CI service account.
+**Why not grant Admin?** Least-privilege principle. A compromised CI token should only be able to upload an APK — not modify store listings, access financial data, or publish to production.
 
 **Play Console setup:**
 1. Create the app and complete store listing, content rating, data safety, and target audience
 2. Go to **Testing → Internal testing** and add tester emails
 3. The service account gets access automatically once linked via API access
 
-> **First release only:** CI uploads the AAB as `status: draft` because Play Console requires this for a brand-new app. Go to Play Console → Internal testing → promote the draft release → Start rollout. After this one-time step, change `status: draft` to `status: completed` in `build_deploy.yml` so future builds go live to testers automatically.
+> **First release only:** CI uploads as `status: draft` because Play Console requires a human to review a brand-new app before rollout. Go to Play Console → Internal testing → promote the draft → Start rollout. After this one-time step, change `status: draft` to `status: completed` in `build_deploy.yml` so future CI builds go live to testers automatically.
 
 ---
 
 ## PoarVault Backend Setup (optional)
 
-PoarVault is the financial "slice and dice" feature inside PulseStock. It connects to bank accounts via Plaid and stores all financial data **locally on the device** — no customer data ever lands in the cloud. The backend is a stateless AWS Lambda proxy that injects Plaid credentials server-side (required by Plaid's security model) and stores nothing.
+PoarVault is the financial "slice and dice" feature inside PulseStock. It connects to bank accounts via Plaid and stores all financial data **locally on the device** — no customer data ever lands in the cloud.
 
-> Skip this section if you only want the stock HUD.
+> Skip this entire section if you only want the stock HUD.
+
+### Why a backend at all?
+
+Plaid's security model requires that `PLAID_CLIENT_ID` and `PLAID_SECRET` never appear in client-side code. Two operations are impossible directly from the Android app:
+
+1. **`/link/token/create`** — generates the `link_token` needed to open Plaid Link UI
+2. **`/item/public_token/exchange`** — exchanges the one-time `public_token` for a persistent `access_token`
+
+The backend is a thin HTTPS proxy (5 AWS Lambda functions) that injects the Plaid credentials and forwards the call. It is **stateless** — it stores nothing. All financial data (transactions, balances, access tokens) is returned to the app and stored on-device only.
+
+### Architecture
+
+```
+Android App
+    │  POST /link-token        ← x-api-key header on every request
+    │  POST /exchange-token       (random key generated at setup time,
+    │  POST /transactions          stored in SSM, added to local.properties)
+    │  POST /balances
+    │  POST /disconnect
+    ▼
+HTTP API Gateway (AWS)          ← single public HTTPS endpoint
+    ▼
+AWS Lambda (Node.js 20)         ← stateless; one function per route
+    reads PLAID_CLIENT_ID + PLAID_SECRET from SSM Parameter Store
+    stores NOTHING
+    ▼
+Plaid API
+```
+
+Plaid `access_token`s returned by `/exchange-token` are encrypted on-device using Android Keystore (AES-256-GCM, hardware-backed on S25). Transaction and balance data lives in a local Room database. Nothing is persisted in AWS.
 
 ### Prerequisites
 
-- [Node.js 20+](https://nodejs.org/) — used for both setup scripts and Lambda code
-- A [Plaid account](https://dashboard.plaid.com/signup) (free sandbox)
-- An AWS account with an IAM user that has programmatic access
+- [Node.js 20+](https://nodejs.org/) — used for both the setup scripts and the Lambda runtime
+- A [Plaid account](https://dashboard.plaid.com/signup) — free sandbox tier is sufficient for development
+- An AWS account with an IAM user that has programmatic (API key) access
 
-**Minimum IAM permissions for the deployment user:**
+**Minimum IAM permissions for the deployment user** — attach these managed policies to the IAM user whose keys go in `infra/.env`:
 
-```
-AmazonS3FullAccess
-AWSCloudFormationFullAccess
-AWSLambda_FullAccess
-AmazonAPIGatewayAdministrator
-AmazonSSMFullAccess
-IAMFullAccess
-```
+| Policy | Why it's needed |
+|---|---|
+| `AmazonS3FullAccess` | Creates the artifact bucket and uploads Lambda zips |
+| `AWSCloudFormationFullAccess` | Deploys and updates the CloudFormation stacks |
+| `AWSLambda_FullAccess` | CloudFormation creates and updates the Lambda functions |
+| `AmazonAPIGatewayAdministrator` | CloudFormation creates the HTTP API Gateway |
+| `AmazonSSMFullAccess` | Writes Plaid credentials and API key to SSM Parameter Store |
+| `IAMFullAccess` | CloudFormation creates the Lambda execution IAM role |
 
-### 1. Create `infra/.env`
+**Why a dedicated IAM user and not your root account?** Root account credentials give unrestricted access to everything in your AWS account. A dedicated IAM user scoped to only the permissions above limits the blast radius if the credentials are ever exposed.
+
+### Step 1 — Create `infra/.env`
 
 ```bash
 cp infra/.env.template infra/.env
-# Edit infra/.env — fill in AWS credentials and Plaid keys
 ```
 
-`infra/.env` is gitignored and will never be committed.
+Open `infra/.env` and fill in your AWS credentials and Plaid keys. This file is listed in `.gitignore` — it will never be committed.
 
-### 2. Install setup dependencies and run setup (one time)
+**Why a local file and not environment variables?** The setup scripts need to run multiple AWS API calls across multiple CloudFormation stacks. Keeping credentials in a single file makes the workflow repeatable without re-exporting variables in every shell session. The file never leaves your machine.
+
+### Step 2 — Install setup script dependencies
 
 ```bash
 cd infra
-npm install        # installs AWS SDK for the setup scripts (separate from Lambda deps)
-npm run setup      # or: node scripts/setup.js
+npm install
 ```
 
-This script:
-1. Writes your Plaid credentials to SSM Parameter Store as `SecureString` (encrypted, free tier)
-2. Generates a random API key and stores it in SSM
-3. Deploys the **bootstrap** CF stack (`poarvault-bootstrap`) — creates the S3 artifact bucket
-4. Packages the Lambda functions (`npm install` + zip) and uploads to S3
-5. Deploys the **main** CF stack (`poarvault`) — IAM role, 5 Lambdas, HTTP API Gateway
+**Why `npm install` here?** The setup scripts (`infra/scripts/`) use the AWS SDK (`@aws-sdk/client-cloudformation`, `@aws-sdk/client-s3`, etc.) to talk to AWS directly — no external CLI tools needed. This `npm install` is for the setup scripts only; it is completely separate from `infra/lambda/package.json`, which holds the Lambda runtime dependencies.
 
-At the end it prints:
+### Step 3 — Run setup (one time)
+
+```bash
+npm run setup
+```
+
+This does the following in order:
+
+1. **Writes Plaid credentials to SSM Parameter Store** as `SecureString` (encrypted at rest using AWS-managed keys, free tier). SSM is used instead of environment variables or a config file because it keeps secrets out of the Lambda deployment package and out of CloudFormation templates — they're fetched at cold-start over an authenticated API call.
+
+2. **Generates a random 64-character API key** and stores it in SSM under `/poarvault/api-key`. Every request from the Android app must include this key in the `x-api-key` header. This prevents random internet users from invoking your Lambda endpoints. The key is printed once — **copy it to `local.properties`** immediately.
+
+3. **Deploys the bootstrap CloudFormation stack** (`poarvault-bootstrap`) — this creates the S3 artifact bucket (`poarvault-artifacts-{account}-{region}`). It must be a separate stack deployed first because the Lambda code zip needs somewhere to be uploaded *before* the main stack can reference it. The bucket has `DeletionPolicy: Retain` so it survives stack recreations and preserves your deploy history.
+
+4. **Packages the Lambda functions** — runs `npm install --omit=dev` inside `infra/lambda/`, zips the result, and uploads it to the artifact bucket. A timestamp in the zip filename (`lambda-{timestamp}.zip`) ensures each deploy creates a new S3 object, which triggers CloudFormation to actually update the Lambda function code.
+
+5. **Deploys the main CloudFormation stack** (`poarvault`) — creates the IAM execution role, 5 Lambda functions, the HTTP API Gateway, routes, and CloudWatch log groups (90-day retention). All resources are named with the `poarvault-` prefix to avoid collisions with other projects in the same AWS account.
+
+At the end, the script prints the API URL and API key:
 
 ```
-POARVAULT_API_URL=https://xxx.execute-api.us-east-1.amazonaws.com
+POARVAULT_API_URL=https://xxx.execute-api.us-east-2.amazonaws.com
 POARVAULT_API_KEY=abc123...
 ```
 
-Add both values to `local.properties`.
+Add both to `local.properties` — the Android app reads them at build time.
 
 ### Subsequent deploys (after Lambda code changes)
 
@@ -275,11 +340,15 @@ Add both values to `local.properties`.
 cd infra && npm run deploy
 ```
 
+Re-packages the Lambda, uploads a new zip, and updates the CloudFormation stack. CloudFormation detects the new S3 key and updates only the Lambda functions — everything else (API Gateway, IAM role, log groups) is left unchanged.
+
 ### Retrieve outputs at any time
 
 ```bash
 cd infra && npm run outputs
 ```
+
+Re-prints the API URL and API key from CloudFormation and SSM without redeploying anything.
 
 ### Tear down
 
@@ -287,28 +356,7 @@ cd infra && npm run outputs
 cd infra && npm run destroy
 ```
 
-Deletes the CloudFormation stack and SSM parameters. The S3 bucket is retained — empty and delete it manually if you no longer need it.
-
-### Architecture
-
-```
-Android App
-    │  POST /link-token        (x-api-key header)
-    │  POST /exchange-token
-    │  POST /transactions
-    │  POST /balances
-    │  POST /disconnect
-    ▼
-HTTP API Gateway (AWS)
-    ▼
-AWS Lambda (Node.js 20, stateless)
-  Reads PLAID_CLIENT_ID + PLAID_SECRET from SSM at cold-start
-  Stores NOTHING
-    ▼
-Plaid API
-```
-
-All Plaid `access_token`s returned by `/exchange-token` are stored **encrypted on the Android device** (Android Keystore AES-256-GCM). Financial data (transactions, balances) lives in a local Room database. Nothing is persisted in AWS.
+Deletes both CloudFormation stacks and all `/poarvault/*` SSM parameters. The S3 artifact bucket is **retained** (by `DeletionPolicy: Retain` in the bootstrap template) so your Lambda zip history isn't accidentally destroyed. To fully clean up, empty and delete the bucket manually after running destroy.
 
 ---
 
