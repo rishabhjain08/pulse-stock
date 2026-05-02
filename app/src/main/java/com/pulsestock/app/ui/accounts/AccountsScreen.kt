@@ -39,10 +39,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.plaid.link.FastOpenPlaidLink
 import com.plaid.link.Plaid
-import com.plaid.link.activity.FastOpenPlaidLink
 import com.plaid.link.configuration.LinkTokenConfiguration
-import com.plaid.link.result.LinkActivityResult
+import com.plaid.link.result.LinkExit
+import com.plaid.link.result.LinkSuccess
 import com.pulsestock.app.data.poarvault.AccountEntity
 import com.pulsestock.app.data.poarvault.InstitutionWithAccounts
 import java.text.NumberFormat
@@ -56,14 +57,10 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
     val snackbarState = remember { SnackbarHostState() }
     val currencyFmt = remember { NumberFormat.getCurrencyInstance(Locale.US) }
 
-    val launcher = rememberLauncherForPlaidLink { result ->
-        if (result is LinkActivityResult.Success) {
-            val institution = result.linkSuccess.metadata.institution ?: return@rememberLauncherForPlaidLink
-            vm.onLinkSuccess(
-                result.linkSuccess.publicToken,
-                institution.id,
-                institution.name,
-            )
+    val launcher = rememberLauncherForActivityResult(FastOpenPlaidLink()) { result ->
+        if (result is LinkSuccess) {
+            val institution = result.metadata.institution ?: return@rememberLauncherForActivityResult
+            vm.onLinkSuccess(result.publicToken, institution.id, institution.name)
         }
     }
 
@@ -149,11 +146,6 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
         }
     }
 }
-
-@Composable
-private fun rememberLauncherForPlaidLink(
-    onResult: (LinkActivityResult) -> Unit,
-) = rememberLauncherForActivityResult(FastOpenPlaidLink(), onResult)
 
 @Composable
 private fun InstitutionCard(
