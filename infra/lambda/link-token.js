@@ -2,6 +2,7 @@
 
 const { loadConfig, getClient, validateApiKey, ok, err } = require('./shared');
 const { CountryCode, Products } = require('plaid');
+// Balance is not a product — it is always available automatically.
 
 exports.handler = async (event) => {
   await loadConfig();
@@ -14,7 +15,7 @@ exports.handler = async (event) => {
     const resp = await getClient().linkTokenCreate({
       user: { client_user_id: user_id },
       client_name: 'PoarVault',
-      products: [Products.Transactions, Products.Balance],
+      products: [Products.Transactions],
       country_codes: [CountryCode.Us],
       language: 'en',
     });
