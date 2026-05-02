@@ -18,6 +18,7 @@ exports.handler = async (event) => {
       products: [Products.Transactions],
       country_codes: [CountryCode.Us],
       language: 'en',
+      android_package_name: 'com.pulsestock.app',
     });
     return ok({ link_token: resp.data.link_token });
   } catch (e) {
