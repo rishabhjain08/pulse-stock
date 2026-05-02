@@ -136,16 +136,20 @@ class PulseHUDService : Service() {
             try { floatingIcon?.let { windowManager.updateViewLayout(it, p) } } catch (_: Exception) {}
         }
 
-        // Resize popup window width and translate its snap state to the new peekX.
+        // Always translate lastPopupX into the new screen's snap coordinates.
+        // This covers the case where the popup is hidden when rotation occurs —
+        // without this, the next showPopup() would open at a portrait-sized snap value.
+        val newPeekX = (sw * 0.55f).toInt()
+        lastPopupX = when {
+            lastPopupX < 0 -> -newPeekX
+            lastPopupX > 0 ->  newPeekX
+            else           ->  0
+        }
+
+        // If popup is already visible, update LayoutParams width and x too.
         popupParams?.let { pp ->
-            val newPeekX = (sw * 0.55f).toInt()
             pp.width = sw
-            pp.x = when {
-                lastPopupX < 0 -> -newPeekX
-                lastPopupX > 0 ->  newPeekX
-                else           ->  0
-            }
-            lastPopupX = pp.x
+            pp.x = lastPopupX
             popupView?.translationX = 0f
             try { popupView?.let { windowManager.updateViewLayout(it, pp) } } catch (_: Exception) {}
         }
@@ -532,6 +536,7 @@ class PulseHUDService : Service() {
                 val pp = popupParams ?: return
                 snapXAnim?.cancel()
                 lastPopupX = targetX
+                lastPopupY = pp.y
                 serviceScope.launch { prefs.setPopupPosition(targetX, pp.y) }
                 pp.flags = if (targetX == 0) {
                     pp.flags or FLAG_WATCH_OUTSIDE_TOUCH
@@ -646,6 +651,12 @@ class PulseHUDService : Service() {
 
     private fun hidePopup() {
         popupVisible.value = false
+        // Capture final position before clearing params so every subsequent showPopup()
+        // — regardless of code path — lands exactly where the popup last was.
+        popupParams?.let { pp ->
+            lastPopupX = pp.x
+            lastPopupY = pp.y
+        }
         popupParams = null
         popupView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         popupView = null
