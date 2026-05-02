@@ -52,10 +52,12 @@ cd pulse-stock
 
 The app streams stock prices from Finnhub.io. A free API key is required — it's the credential Finnhub uses to track your usage against the free-tier limits (60 calls/min, unlimited WebSocket symbols).
 
-Create `local.properties` at the project root:
+Create `local.properties` at the project root (or copy from the provided template):
 
 ```properties
 FINNHUB_API_KEY=your_finnhub_api_key_here
+POARVAULT_API_URL=https://your-api-id.execute-api.us-east-1.amazonaws.com
+POARVAULT_API_KEY=your_poarvault_api_key_here
 sdk.dir=/path/to/your/android/sdk
 ```
 
