@@ -2,7 +2,9 @@
 
 const { loadConfig, getClient, validateApiKey, ok, err } = require('./shared');
 const { CountryCode, Products } = require('plaid');
-// Balance is not a product — it is always available automatically.
+// Balance is always available automatically (not a product).
+// Liabilities enables /liabilities/get for statement balance + due date on credit cards.
+// Note: existing items linked without Liabilities will need to be re-linked by the user.
 
 exports.handler = async (event) => {
   await loadConfig();
@@ -15,7 +17,7 @@ exports.handler = async (event) => {
     const resp = await getClient().linkTokenCreate({
       user: { client_user_id: user_id },
       client_name: 'PoarVault',
-      products: [Products.Transactions],
+      products: [Products.Transactions, Products.Liabilities],
       country_codes: [CountryCode.Us],
       language: 'en',
       android_package_name: 'com.pulsestock.app',

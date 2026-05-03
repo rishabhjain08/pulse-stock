@@ -14,6 +14,9 @@ interface PoarVaultDao {
     @Query("SELECT * FROM institutions ORDER BY addedAt DESC")
     fun watchInstitutions(): Flow<List<InstitutionWithAccounts>>
 
+    @Query("SELECT * FROM accounts WHERE type = 'credit' ORDER BY name ASC")
+    fun watchCreditCardAccounts(): Flow<List<AccountEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertInstitution(institution: InstitutionEntity)
 
@@ -25,4 +28,28 @@ interface PoarVaultDao {
 
     @Query("SELECT institutionId FROM institutions")
     suspend fun allInstitutionIds(): List<String>
+
+    @Query("""
+        UPDATE accounts
+        SET statementBalance = :balance, minimumPayment = :minPay, nextDueDate = :dueDate
+        WHERE accountId = :accountId
+    """)
+    suspend fun updateLiability(accountId: String, balance: Double?, minPay: Double?, dueDate: String?)
+
+    // ── Transactions ──────────────────────────────────────────────────────────
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTransactions(transactions: List<PlaidTransaction>)
+
+    @Query("SELECT * FROM plaid_transactions WHERE transactionId IN (:ids)")
+    suspend fun getTransactionsByIds(ids: List<String>): List<PlaidTransaction>
+
+    @Query("""
+        SELECT pt.* FROM plaid_transactions pt
+        INNER JOIN accounts a ON pt.accountId = a.accountId
+        WHERE a.type = 'credit'
+        ORDER BY pt.date DESC
+        LIMIT 300
+    """)
+    suspend fun getRecentCreditTransactions(): List<PlaidTransaction>
 }

@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  PoarVault — stateless Plaid proxy.
-  5 Lambda functions behind an HTTP API Gateway.
-  Stores NOTHING. All Plaid secrets live in SSM Parameter Store.
+  PoarVault — stateless Plaid + Splitwise proxy.
+  7 Lambda functions behind an HTTP API Gateway.
+  Stores NOTHING. All secrets live in SSM Parameter Store.
   Requires the poarvault-bootstrap stack to be deployed first.
 
 Parameters:
@@ -66,6 +66,18 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/poarvault-disconnect
+      RetentionInDays: 90
+
+  LogGroupSplitwiseAuth:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/poarvault-splitwise-auth
+      RetentionInDays: 90
+
+  LogGroupLiabilities:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/poarvault-liabilities
       RetentionInDays: 90
 
   # ── Lambda functions ────────────────────────────────────────────────────────
@@ -140,6 +152,34 @@ Resources:
         S3Bucket: !ImportValue poarvault-artifact-bucket
         S3Key: !Ref LambdaS3Key
 
+  LambdaSplitwiseAuth:
+    Type: AWS::Lambda::Function
+    DependsOn: LogGroupSplitwiseAuth
+    Properties:
+      FunctionName: poarvault-splitwise-auth
+      Runtime: nodejs20.x
+      Handler: splitwise-auth.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 256
+      Timeout: 10
+      Code:
+        S3Bucket: !ImportValue poarvault-artifact-bucket
+        S3Key: !Ref LambdaS3Key
+
+  LambdaLiabilities:
+    Type: AWS::Lambda::Function
+    DependsOn: LogGroupLiabilities
+    Properties:
+      FunctionName: poarvault-liabilities
+      Runtime: nodejs20.x
+      Handler: liabilities.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 256
+      Timeout: 15
+      Code:
+        S3Bucket: !ImportValue poarvault-artifact-bucket
+        S3Key: !Ref LambdaS3Key
+
   # ── HTTP API Gateway ────────────────────────────────────────────────────────
 
   HttpApi:
@@ -206,6 +246,22 @@ Resources:
       IntegrationUri: !GetAtt LambdaDisconnect.Arn
       PayloadFormatVersion: '2.0'
 
+  IntegrationSplitwiseAuth:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt LambdaSplitwiseAuth.Arn
+      PayloadFormatVersion: '2.0'
+
+  IntegrationLiabilities:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt LambdaLiabilities.Arn
+      PayloadFormatVersion: '2.0'
+
   # ── Routes ──────────────────────────────────────────────────────────────────
 
   RouteLinkToken:
@@ -242,6 +298,20 @@ Resources:
       ApiId: !Ref HttpApi
       RouteKey: POST /disconnect
       Target: !Sub 'integrations/${IntegrationDisconnect}'
+
+  RouteSplitwiseAuth:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /splitwise-auth
+      Target: !Sub 'integrations/${IntegrationSplitwiseAuth}'
+
+  RouteLiabilities:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /liabilities
+      Target: !Sub 'integrations/${IntegrationLiabilities}'
 
   # ── Lambda invoke permissions for API Gateway ───────────────────────────────
 
@@ -281,6 +351,22 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !GetAtt LambdaDisconnect.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  InvokePermissionSplitwiseAuth:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaSplitwiseAuth.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  InvokePermissionLiabilities:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaLiabilities.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'

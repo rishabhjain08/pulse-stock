@@ -1,13 +1,17 @@
 package com.pulsestock.app.ui.accounts
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +21,7 @@ import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,6 +30,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -65,7 +71,7 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
                     ?: return@rememberLauncherForActivityResult
                 vm.onLinkSuccess(result.publicToken, institution.id, institution.name)
             }
-            is LinkExit -> Unit  // user cancelled or error; Plaid SDK already showed its own error UI
+            is LinkExit -> Unit
         }
     }
 
@@ -73,6 +79,12 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
         vm.linkToken.collect { token ->
             val config = LinkTokenConfiguration.Builder().token(token).build()
             launcher.launch(Plaid.create(context.applicationContext as android.app.Application, config))
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm.launchUrl.collect { url ->
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
 
@@ -92,56 +104,58 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
-        when {
-            state.isInitialLoad -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(innerPadding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
+        if (state.isInitialLoad) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
             }
-            state.institutions.isEmpty() -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(innerPadding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AccountBalance,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = "No banks connected",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            text = "Tap + to connect your first account",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = innerPadding.calculateTopPadding() + 8.dp,
-                        bottom = innerPadding.calculateBottomPadding() + 8.dp,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = innerPadding.calculateTopPadding() + 8.dp,
+                    bottom = innerPadding.calculateBottomPadding() + 8.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (state.institutions.isNotEmpty()) {
                     item {
                         SyncRow(isSyncing = state.isSyncing, onSync = vm::sync)
                     }
+                }
+                if (state.institutions.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalance,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = "No banks connected",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    text = "Tap + to connect your first account",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                } else {
                     items(state.institutions, key = { it.institution.institutionId }) { iwa ->
                         val id = iwa.institution.institutionId
                         InstitutionCard(
@@ -151,6 +165,74 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
                             onSync = { vm.syncInstitution(id) },
                             onDisconnect = { vm.disconnect(id) },
                         )
+                    }
+                }
+                item {
+                    SplitwiseCard(
+                        isConnected = state.isSplitwiseConnected,
+                        isConnecting = state.isSplitwiseConnecting,
+                        onConnect = vm::connectSplitwise,
+                        onDisconnect = vm::disconnectSplitwise,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SplitwiseCard(
+    isConnected: Boolean,
+    isConnecting: Boolean,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Splitwise",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            if (isConnected) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "Connected",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    OutlinedButton(onClick = onDisconnect) {
+                        Text("Disconnect")
+                    }
+                }
+            } else {
+                Text(
+                    text = "Link your Splitwise account to reconcile shared expenses with credit card transactions.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = onConnect,
+                    enabled = !isConnecting,
+                ) {
+                    if (isConnecting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    } else {
+                        Text("Connect Splitwise")
                     }
                 }
             }
@@ -201,7 +283,6 @@ private fun InstitutionCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Institution name + sync + disconnect
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
@@ -240,7 +321,6 @@ private fun InstitutionCard(
                 }
             }
 
-            // Last sync time
             Text(
                 text = "Last synced: ${formatSyncTime(lastSyncedMs)}",
                 style = MaterialTheme.typography.bodySmall,

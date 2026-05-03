@@ -34,6 +34,15 @@ class PoarVaultApi {
         client.newCall(post("/disconnect", """{"access_token":"$accessToken"}""")).execute().close()
     }
 
+    suspend fun getLiabilities(accessToken: String): PlaidLiabilitiesResponse =
+        call(post("/liabilities", """{"access_token":"$accessToken"}"""))
+
+    suspend fun getTransactions(accessToken: String, startDate: String, endDate: String): PlaidTransactionsResponse =
+        call(post("/transactions", """{"access_token":"$accessToken","start_date":"$startDate","end_date":"$endDate"}"""))
+
+    suspend fun exchangeSplitwiseCode(code: String): SplitwiseAuthResponse =
+        call(post("/splitwise-auth", """{"code":"$code"}"""))
+
     private suspend inline fun <reified T> call(request: Request): T = withContext(Dispatchers.IO) {
         val resp = client.newCall(request).execute()
         val body = resp.body?.string() ?: error("Empty response from ${request.url}")

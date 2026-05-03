@@ -4,10 +4,14 @@ import android.app.Application
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.data.poarvault.InstitutionWithAccounts
 import com.pulsestock.app.data.poarvault.PoarVaultApi
 import com.pulsestock.app.data.poarvault.PoarVaultDatabase
 import com.pulsestock.app.data.poarvault.PoarVaultRepository
+import com.pulsestock.app.data.poarvault.SplitwiseApi
+import com.pulsestock.app.data.poarvault.SplitwiseAuthBus
+import com.pulsestock.app.data.poarvault.SplitwiseRepository
 import com.pulsestock.app.data.poarvault.TokenStore
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +26,8 @@ data class AccountsUiState(
     val isInitialLoad: Boolean = true,
     val isSyncing: Boolean = false,
     val syncingIds: Set<String> = emptySet(),
+    val isSplitwiseConnected: Boolean = false,
+    val isSplitwiseConnecting: Boolean = false,
     val error: String? = null,
 )
 
@@ -31,7 +37,9 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val tokens = TokenStore(ctx)
     private val db = PoarVaultDatabase.get(ctx, tokens.getOrCreatePassphrase())
     private val api = PoarVaultApi()
+    private val splitwiseApi = SplitwiseApi()
     private val repo = PoarVaultRepository(api, db, tokens)
+    private val splitwiseRepo = SplitwiseRepository(api, splitwiseApi, db, tokens)
 
     private val _uiState = MutableStateFlow(AccountsUiState())
     val uiState: StateFlow<AccountsUiState> = _uiState.asStateFlow()
@@ -39,15 +47,24 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val _linkToken = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val linkToken: SharedFlow<String> = _linkToken.asSharedFlow()
 
+    private val _launchUrl = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val launchUrl: SharedFlow<String> = _launchUrl.asSharedFlow()
+
     private val userId: String
         get() = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
 
     init {
-        // Only reads from the local DB — no Plaid API calls on startup.
         viewModelScope.launch {
             repo.institutions.collect { list ->
-                _uiState.value = _uiState.value.copy(institutions = list, isInitialLoad = false)
+                _uiState.value = _uiState.value.copy(
+                    institutions = list,
+                    isInitialLoad = false,
+                    isSplitwiseConnected = splitwiseRepo.isConnected(),
+                )
             }
+        }
+        viewModelScope.launch {
+            SplitwiseAuthBus.code.collect { code -> handleOAuthCode(code) }
         }
     }
 
@@ -101,7 +118,34 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun connectSplitwise() {
+        val url = "https://secure.splitwise.com/oauth/authorize" +
+            "?response_type=code" +
+            "&client_id=${BuildConfig.SPLITWISE_CONSUMER_KEY}" +
+            "&redirect_uri=pulsestock%3A%2F%2Fsplitwise%2Fcallback"
+        viewModelScope.launch { _launchUrl.emit(url) }
+    }
+
+    fun disconnectSplitwise() {
+        splitwiseRepo.disconnect()
+        _uiState.value = _uiState.value.copy(isSplitwiseConnected = false)
+    }
+
     fun dismissError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    private fun handleOAuthCode(code: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSplitwiseConnecting = true)
+            try {
+                splitwiseRepo.handleOAuthCode(code)
+                _uiState.value = _uiState.value.copy(isSplitwiseConnected = true)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = "Splitwise connect failed: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(isSplitwiseConnecting = false)
+            }
+        }
     }
 }

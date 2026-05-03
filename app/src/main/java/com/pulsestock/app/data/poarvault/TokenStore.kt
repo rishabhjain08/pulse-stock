@@ -33,7 +33,24 @@ class TokenStore(context: Context) {
     fun removeAccessToken(institutionId: String) =
         prefs.edit().remove("token_$institutionId").apply()
 
+    fun putSplitwiseToken(token: String) =
+        prefs.edit().putString(KEY_SPLITWISE_TOKEN, token).apply()
+
+    fun getSplitwiseToken(): String? =
+        prefs.getString(KEY_SPLITWISE_TOKEN, null)
+
+    fun removeSplitwiseToken() =
+        prefs.edit().remove(KEY_SPLITWISE_TOKEN).apply()
+
+    fun putSplitwiseUserId(id: Long) =
+        prefs.edit().putString(KEY_SPLITWISE_USER_ID, id.toString()).apply()
+
+    fun getSplitwiseUserId(): Long =
+        prefs.getString(KEY_SPLITWISE_USER_ID, null)?.toLongOrNull() ?: -1L
+
     companion object {
         private const val KEY_PASSPHRASE = "db_passphrase"
+        private const val KEY_SPLITWISE_TOKEN = "splitwise_token"
+        private const val KEY_SPLITWISE_USER_ID = "splitwise_user_id"
     }
 }

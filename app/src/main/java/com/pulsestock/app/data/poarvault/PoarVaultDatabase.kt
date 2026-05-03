@@ -7,13 +7,19 @@ import androidx.room.RoomDatabase
 import net.sqlcipher.database.SupportFactory
 
 @Database(
-    entities = [InstitutionEntity::class, AccountEntity::class],
-    version = 1,
+    entities = [
+        InstitutionEntity::class,
+        AccountEntity::class,
+        PlaidTransaction::class,
+        SplitwiseExpense::class,
+    ],
+    version = 2,
     exportSchema = false,
 )
 abstract class PoarVaultDatabase : RoomDatabase() {
 
     abstract fun dao(): PoarVaultDao
+    abstract fun splitwiseDao(): SplitwiseDao
 
     companion object {
         @Volatile private var INSTANCE: PoarVaultDatabase? = null
@@ -27,6 +33,7 @@ abstract class PoarVaultDatabase : RoomDatabase() {
                         "poarvault.db",
                     )
                     .openHelperFactory(SupportFactory(passphrase))
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

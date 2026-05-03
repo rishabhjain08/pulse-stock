@@ -47,4 +47,38 @@ class PoarVaultRepository(
         }
         db.dao().upsertAccounts(accounts)
     }
+
+    suspend fun refreshLiabilities(institutionId: String) {
+        val token = tokens.getAccessToken(institutionId) ?: return
+        val resp = api.getLiabilities(token)
+        resp.liabilities.credit?.forEach { liability ->
+            db.dao().updateLiability(
+                accountId = liability.accountId,
+                balance = liability.lastStatementBalance,
+                minPay = liability.minimumPaymentAmount,
+                dueDate = liability.nextPaymentDueDate,
+            )
+        }
+    }
+
+    suspend fun refreshTransactions(institutionId: String) {
+        val token = tokens.getAccessToken(institutionId) ?: return
+        val endDate = java.time.LocalDate.now().toString()
+        val startDate = java.time.LocalDate.now().minusDays(89).toString()
+        val resp = api.getTransactions(token, startDate, endDate)
+        val transactions = resp.transactions
+            .filter { !it.pending }
+            .map { t ->
+                PlaidTransaction(
+                    transactionId = t.transactionId,
+                    accountId = t.accountId,
+                    institutionId = institutionId,
+                    name = t.name,
+                    amount = t.amount,
+                    date = t.date,
+                    category = t.category?.firstOrNull(),
+                )
+            }
+        db.dao().upsertTransactions(transactions)
+    }
 }

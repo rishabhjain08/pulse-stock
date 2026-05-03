@@ -1,5 +1,6 @@
 package com.pulsestock.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -9,21 +10,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pulsestock.app.data.poarvault.SplitwiseAuthBus
 import com.pulsestock.app.ui.SettingsScreen
 import com.pulsestock.app.ui.accounts.AccountsScreen
+import com.pulsestock.app.ui.finances.FinancesScreen
+import com.pulsestock.app.ui.finances.FinancesViewModel
 import com.pulsestock.app.ui.theme.PulseStockTheme
 
 class MainActivity : ComponentActivity() {
@@ -36,11 +45,22 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val uri = intent.data ?: return
+        if (uri.scheme == "pulsestock" && uri.host == "splitwise") {
+            val code = uri.getQueryParameter("code") ?: return
+            SplitwiseAuthBus.deliver(code)
+        }
+    }
 }
 
 @Composable
 private fun MainScreen() {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val financesVm: FinancesViewModel = viewModel()
+    val financesState by financesVm.uiState.collectAsState()
 
     Scaffold(
         bottomBar = {
@@ -57,11 +77,23 @@ private fun MainScreen() {
                     icon = { Icon(Icons.Default.AccountBalance, contentDescription = null) },
                     label = { Text("Accounts") },
                 )
+                NavigationBarItem(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    icon = {
+                        BadgedBox(badge = {
+                            if (financesState.inboxCount > 0) {
+                                Badge { Text(financesState.inboxCount.toString()) }
+                            }
+                        }) {
+                            Icon(Icons.Default.CreditCard, contentDescription = null)
+                        }
+                    },
+                    label = { Text("Finances") },
+                )
             }
         },
     ) { innerPadding ->
-        // consumeWindowInsets prevents inner Scaffolds from double-counting system bar insets
-        // that the outer Scaffold already handled in innerPadding.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -70,6 +102,7 @@ private fun MainScreen() {
             when (selectedTab) {
                 0 -> SettingsScreen(modifier = Modifier.padding(innerPadding))
                 1 -> AccountsScreen(modifier = Modifier.padding(innerPadding))
+                2 -> FinancesScreen(modifier = Modifier.padding(innerPadding))
             }
         }
     }
