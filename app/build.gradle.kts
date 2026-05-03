@@ -26,6 +26,18 @@ val poarvaultApiKey: String = localProps.getProperty("POARVAULT_API_KEY")
     ?: System.getenv("POARVAULT_API_KEY")
     ?: ""
 
+// Android 16 (API 36) made Configuration.fontWeightAdjustment private.
+// Compose 1.11.0 accesses it as a direct field → NoSuchFieldError crash on every
+// Android 16 device. Force the whole androidx.compose.ui group to 1.12.0-alpha01
+// which uses the getFontWeightAdjustment() getter instead.
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "androidx.compose.ui") {
+            useVersion("1.12.0-alpha01")
+        }
+    }
+}
+
 android {
     namespace = "com.pulsestock.app"
     compileSdk = 36
