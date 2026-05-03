@@ -25,6 +25,11 @@ val poarvaultApiUrl: String = localProps.getProperty("POARVAULT_API_URL")
 val poarvaultApiKey: String = localProps.getProperty("POARVAULT_API_KEY")
     ?: System.getenv("POARVAULT_API_KEY")
     ?: ""
+val splitwiseConsumerKey: String = localProps.getProperty("SPLITWISE_CONSUMER_KEY")
+    ?: System.getenv("SPLITWISE_CONSUMER_KEY")
+    ?: ""
+// SPLITWISE_CONSUMER_SECRET is intentionally not read here.
+// It is only used by the Lambda for the token exchange and must never be baked into the APK.
 
 // Android 16 (API 36) made Configuration.fontWeightAdjustment private.
 // Compose 1.11.0 accesses it as a direct field → NoSuchFieldError crash on every
@@ -54,6 +59,7 @@ android {
         buildConfigField("String", "FINNHUB_API_KEY", "\"$finnhubApiKey\"")
         buildConfigField("String", "POARVAULT_API_URL", "\"$poarvaultApiUrl\"")
         buildConfigField("String", "POARVAULT_API_KEY", "\"$poarvaultApiKey\"")
+        buildConfigField("String", "SPLITWISE_CONSUMER_KEY", "\"$splitwiseConsumerKey\"")
     }
 
     signingConfigs {

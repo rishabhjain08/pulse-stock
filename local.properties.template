@@ -18,5 +18,15 @@ POARVAULT_API_URL=https://your-api-id.execute-api.us-east-1.amazonaws.com
 # Generated during infra setup and stored in AWS SSM — printed once by the setup script.
 POARVAULT_API_KEY=your_poarvault_api_key_here
 
+# Splitwise OAuth2 — for the financial reconciliation feature.
+# Register your app at https://secure.splitwise.com/oauth_clients
+# Authorize URL : https://secure.splitwise.com/oauth/authorize
+# Token URL     : https://secure.splitwise.com/oauth/token
+#
+# SPLITWISE_CONSUMER_KEY   → baked into the APK (used to construct the authorize URL)
+# SPLITWISE_CONSUMER_SECRET → Lambda only — never put this in the app or commit it
+SPLITWISE_CONSUMER_KEY=your_splitwise_consumer_key_here
+SPLITWISE_CONSUMER_SECRET=your_splitwise_consumer_secret_here
+
 # Android SDK path (Android Studio fills this automatically)
 # sdk.dir=/Users/you/Library/Android/sdk

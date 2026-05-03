@@ -180,6 +180,8 @@ Builds a **debug APK** and delivers it directly to testers via Firebase App Dist
 | `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard | Baked into the APK at build time via `BuildConfig`; never hardcoded in source |
 | `POARVAULT_API_URL` | `node infra/scripts/get-outputs.js` after running setup | PoarVault Lambda base URL; baked into the build via `BuildConfig` |
 | `POARVAULT_API_KEY` | `node infra/scripts/get-outputs.js` after running setup | Authenticates Android app to PoarVault Lambda; baked into the build via `BuildConfig` |
+| `SPLITWISE_CONSUMER_KEY` | [secure.splitwise.com/oauth_clients](https://secure.splitwise.com/oauth_clients) | Baked into the APK to construct the OAuth authorize URL; safe to expose |
+| `SPLITWISE_CONSUMER_SECRET` | [secure.splitwise.com/oauth_clients](https://secure.splitwise.com/oauth_clients) | Lambda only — never baked into the APK; used server-side for token exchange |
 | `GOOGLE_SERVICES_JSON` | Firebase console → Project settings → `google-services.json` | CI doesn't have access to your local file; the secret injects it during the build |
 | `FIREBASE_APP_ID` | Firebase console → Project settings → Your apps → App ID (`1:xxx:android:xxx`) | Tells the Firebase CLI which app to distribute to |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase console → Project settings → Service accounts → Generate key | Authenticates CI to Firebase without exposing your personal Google account credentials |
@@ -217,6 +219,8 @@ base64 -i pulsestock.keystore | pbcopy
 | `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/) dashboard | Baked into the release build at compile time |
 | `POARVAULT_API_URL` | `node infra/scripts/get-outputs.js` after running setup | PoarVault Lambda base URL; baked into the release build |
 | `POARVAULT_API_KEY` | `node infra/scripts/get-outputs.js` after running setup | Authenticates Android app to PoarVault Lambda; baked into the release build |
+| `SPLITWISE_CONSUMER_KEY` | [secure.splitwise.com/oauth_clients](https://secure.splitwise.com/oauth_clients) | Baked into the release build for OAuth authorize URL |
+| `SPLITWISE_CONSUMER_SECRET` | [secure.splitwise.com/oauth_clients](https://secure.splitwise.com/oauth_clients) | Lambda only — injected as Lambda env var, never in the APK |
 | `GOOGLE_SERVICES_JSON` | Firebase console → `google-services.json` | Same reason as Option A |
 | `KEYSTORE_BASE64` | Base64 output of the command above | CI needs the keystore to sign the AAB; base64 encoding lets it be stored as a text secret |
 | `KEYSTORE_PASSWORD` | Password chosen during `keytool` | Unlocks the keystore file |
