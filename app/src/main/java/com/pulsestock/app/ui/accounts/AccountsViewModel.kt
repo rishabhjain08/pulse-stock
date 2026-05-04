@@ -132,8 +132,10 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun disconnectSplitwise() {
-        splitwiseRepo.disconnect()
-        _uiState.value = _uiState.value.copy(isSplitwiseConnected = false)
+        viewModelScope.launch {
+            splitwiseRepo.disconnect()
+            _uiState.value = _uiState.value.copy(isSplitwiseConnected = false)
+        }
     }
 
     fun dismissError() {

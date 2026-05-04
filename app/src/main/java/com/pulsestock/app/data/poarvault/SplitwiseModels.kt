@@ -1,7 +1,10 @@
 package com.pulsestock.app.data.poarvault
 
+import androidx.room.Embedded
 import androidx.room.Entity
+import androidx.room.Junction
 import androidx.room.PrimaryKey
+import androidx.room.Relation
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -17,10 +20,37 @@ data class SplitwiseExpense(
     val pageOffset: Int = 0,
     val cachedAt: Long = System.currentTimeMillis(),
     // Inbox state — never overwritten by a cache refresh (IGNORE on conflict)
-    val linkedPlaidId: String? = null,
     val isDismissed: Boolean = false,
     val isAutoMatched: Boolean = false,
 )
+
+// Many-to-many junction: one Splitwise expense ↔ many Plaid transactions
+@Entity(
+    tableName = "splitwise_plaid_links",
+    primaryKeys = ["expenseId", "plaidTransactionId"],
+)
+data class SplitwisePlaidLink(
+    val expenseId: Long,
+    val plaidTransactionId: String,
+)
+
+data class ExpenseWithLinks(
+    @Embedded val expense: SplitwiseExpense,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "transactionId",
+        associateBy = Junction(
+            value = SplitwisePlaidLink::class,
+            parentColumn = "expenseId",
+            entityColumn = "plaidTransactionId",
+        )
+    )
+    val linkedTransactions: List<PlaidTransaction>,
+) {
+    val isReconciled: Boolean get() = linkedTransactions.isNotEmpty() && !expense.isAutoMatched
+    val isPendingAutoMatch: Boolean get() = expense.isAutoMatched && linkedTransactions.isNotEmpty()
+    val isUnlinked: Boolean get() = linkedTransactions.isEmpty() && !expense.isAutoMatched
+}
 
 @Entity(tableName = "plaid_transactions")
 data class PlaidTransaction(

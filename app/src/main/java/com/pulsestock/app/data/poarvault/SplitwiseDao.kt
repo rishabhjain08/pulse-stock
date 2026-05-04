@@ -4,54 +4,64 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SplitwiseDao {
 
-    // Inbox: not dismissed, and (not yet linked OR auto-match still pending approval)
-    @Query("""
-        SELECT * FROM splitwise_expenses
-        WHERE isDismissed = 0
-        AND (linkedPlaidId IS NULL OR isAutoMatched = 1)
-        ORDER BY date DESC
-    """)
-    fun watchInbox(): Flow<List<SplitwiseExpense>>
+    // Single query drives everything: all non-dismissed expenses with their linked CC transactions.
+    // Room re-emits whenever either splitwise_expenses or splitwise_plaid_links changes.
+    @Transaction
+    @Query("SELECT * FROM splitwise_expenses WHERE isDismissed = 0 ORDER BY date DESC")
+    fun watchAllNonDismissedWithLinks(): Flow<List<ExpenseWithLinks>>
 
+    // Inbox count: expenses that still need action (no links yet, or pending auto-match approval)
     @Query("""
-        SELECT COUNT(*) FROM splitwise_expenses
-        WHERE isDismissed = 0
-        AND (linkedPlaidId IS NULL OR isAutoMatched = 1)
+        SELECT COUNT(*) FROM splitwise_expenses e
+        WHERE e.isDismissed = 0
+        AND (e.isAutoMatched = 1 OR NOT EXISTS (
+            SELECT 1 FROM splitwise_plaid_links l WHERE l.expenseId = e.id
+        ))
     """)
     fun watchInboxCount(): Flow<Int>
 
-    // IGNORE so refreshing from the API never overwrites linkedPlaidId / isDismissed / isAutoMatched.
+    // IGNORE: never overwrite isDismissed / isAutoMatched on a re-fetch
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertExpenses(expenses: List<SplitwiseExpense>)
 
-    @Query("SELECT * FROM splitwise_expenses WHERE isDismissed = 0 AND linkedPlaidId IS NULL AND isAutoMatched = 0")
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertLink(link: SplitwisePlaidLink)
+
+    @Query("DELETE FROM splitwise_plaid_links WHERE expenseId = :expenseId AND plaidTransactionId = :plaidId")
+    suspend fun deleteLink(expenseId: Long, plaidId: String)
+
+    @Query("DELETE FROM splitwise_plaid_links WHERE expenseId = :expenseId")
+    suspend fun deleteLinksForExpense(expenseId: Long)
+
+    // Expenses with no links and not pending auto-match — candidates for auto-matching
+    @Query("""
+        SELECT * FROM splitwise_expenses
+        WHERE isDismissed = 0 AND isAutoMatched = 0
+        AND NOT EXISTS (SELECT 1 FROM splitwise_plaid_links l WHERE l.expenseId = id)
+    """)
     suspend fun getUnlinkedExpenses(): List<SplitwiseExpense>
 
     @Query("SELECT MAX(pageOffset) FROM splitwise_expenses")
     suspend fun maxPageOffset(): Int?
 
-    @Query("UPDATE splitwise_expenses SET linkedPlaidId = :plaidId, isAutoMatched = 0 WHERE id = :expenseId")
-    suspend fun linkTransaction(expenseId: Long, plaidId: String)
-
-    @Query("UPDATE splitwise_expenses SET linkedPlaidId = NULL, isAutoMatched = 0 WHERE id = :expenseId")
-    suspend fun unlink(expenseId: Long)
-
     @Query("UPDATE splitwise_expenses SET isDismissed = 1 WHERE id = :expenseId")
     suspend fun dismiss(expenseId: Long)
 
-    @Query("UPDATE splitwise_expenses SET linkedPlaidId = :plaidId, isAutoMatched = 1 WHERE id = :expenseId")
-    suspend fun setAutoMatch(expenseId: Long, plaidId: String)
+    @Query("UPDATE splitwise_expenses SET isAutoMatched = 1 WHERE id = :expenseId")
+    suspend fun setAutoMatchPending(expenseId: Long)
 
-    // Accept: keep linkedPlaidId, just clear the pending flag → drops out of inbox
     @Query("UPDATE splitwise_expenses SET isAutoMatched = 0 WHERE id = :expenseId")
-    suspend fun acceptAutoMatch(expenseId: Long)
+    suspend fun clearAutoMatch(expenseId: Long)
 
-    // Reject: clear both — expense returns to inbox without ⚡
-    @Query("UPDATE splitwise_expenses SET linkedPlaidId = NULL, isAutoMatched = 0 WHERE id = :expenseId")
-    suspend fun rejectAutoMatch(expenseId: Long)
+    @Query("DELETE FROM splitwise_expenses")
+    suspend fun nukeAllExpenses()
+
+    @Query("DELETE FROM splitwise_plaid_links")
+    suspend fun nukeAllLinks()
 }

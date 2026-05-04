@@ -159,8 +159,8 @@ private fun ReconcileEntryCard(count: Int, onClick: () -> Unit) {
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                text = if (highlighted) "Reconcile Expenses · $count unmatched"
-                       else "Reconcile Expenses",
+                text = if (highlighted) "Splitwise Expenses · $count to link"
+                       else "Splitwise Expenses",
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onSurface,

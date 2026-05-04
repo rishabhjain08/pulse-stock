@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsestock.app.data.poarvault.AccountEntity
+import com.pulsestock.app.data.poarvault.ExpenseWithLinks
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.PoarVaultApi
 import com.pulsestock.app.data.poarvault.PoarVaultDatabase
@@ -25,15 +26,19 @@ data class LinkSheetState(
 
 data class FinancesUiState(
     val creditAccounts: List<AccountEntity> = emptyList(),
-    val inbox: List<SplitwiseExpense> = emptyList(),
+    val allWithLinks: List<ExpenseWithLinks> = emptyList(),
     val inboxCount: Int = 0,
-    val autoMatchedTx: Map<String, PlaidTransaction> = emptyMap(),
+    val showAll: Boolean = false,
     val isSplitwiseConnected: Boolean = false,
     val isSyncing: Boolean = false,
     val isLoadingMore: Boolean = false,
     val linkSheet: LinkSheetState? = null,
     val error: String? = null,
-)
+) {
+    val displayedList: List<ExpenseWithLinks>
+        get() = if (showAll) allWithLinks
+                else allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
+}
 
 class FinancesViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -58,12 +63,8 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch {
-            splitwiseRepo.inbox.collect { expenses ->
-                val autoMatchedIds = expenses.filter { it.isAutoMatched }.mapNotNull { it.linkedPlaidId }
-                val autoMatchedTx = if (autoMatchedIds.isNotEmpty()) {
-                    db.dao().getTransactionsByIds(autoMatchedIds).associateBy { it.transactionId }
-                } else emptyMap()
-                _uiState.value = _uiState.value.copy(inbox = expenses, autoMatchedTx = autoMatchedTx)
+            splitwiseRepo.allWithLinks.collect { list ->
+                _uiState.value = _uiState.value.copy(allWithLinks = list)
             }
         }
         viewModelScope.launch {
@@ -104,11 +105,19 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun openLinkSheet(expense: SplitwiseExpense) {
+    fun toggleShowAll() {
+        _uiState.value = _uiState.value.copy(showAll = !_uiState.value.showAll)
+    }
+
+    fun openLinkSheet(item: ExpenseWithLinks) {
         viewModelScope.launch {
+            val alreadyLinked = item.linkedTransactions.map { it.transactionId }.toSet()
             val all = db.dao().getRecentCreditTransactions()
-            val suggested = splitwiseRepo.suggestedMatches(expense, all)
-            _uiState.value = _uiState.value.copy(linkSheet = LinkSheetState(expense, suggested, all))
+                .filter { it.transactionId !in alreadyLinked }
+            val suggested = splitwiseRepo.suggestedMatches(item.expense, all)
+            _uiState.value = _uiState.value.copy(
+                linkSheet = LinkSheetState(item.expense, suggested, all)
+            )
         }
     }
 
@@ -121,6 +130,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             splitwiseRepo.linkTransaction(expenseId, plaidId)
             closeLinkSheet()
         }
+    }
+
+    fun unlinkTransaction(expenseId: Long, plaidId: String) {
+        viewModelScope.launch { splitwiseRepo.unlinkTransaction(expenseId, plaidId) }
     }
 
     fun dismiss(expenseId: Long) {
