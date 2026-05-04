@@ -1,6 +1,7 @@
 package com.pulsestock.app.data.poarvault
 
 import com.pulsestock.app.BuildConfig
+import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -44,9 +45,15 @@ class PoarVaultApi {
         call(post("/splitwise-auth", """{"code":"$code"}"""))
 
     private suspend inline fun <reified T> call(request: Request): T = withContext(Dispatchers.IO) {
+        val path = request.url.encodedPath
+        PulseLog.d("PoarVaultApi", "→ POST $path")
         val resp = client.newCall(request).execute()
-        val body = resp.body?.string() ?: error("Empty response from ${request.url}")
-        if (!resp.isSuccessful) error("API ${resp.code}: $body")
+        PulseLog.d("PoarVaultApi", "← $path ${resp.code}")
+        val body = resp.body?.string() ?: error("Empty response from $path")
+        if (!resp.isSuccessful) {
+            PulseLog.e("PoarVaultApi", "← $path ${resp.code} error body: $body")
+            error("API ${resp.code}: $body")
+        }
         json.decodeFromString<T>(body)
     }
 }

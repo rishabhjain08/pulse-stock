@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pulsestock.app.PulseLog
 import com.pulsestock.app.data.poarvault.SplitwiseAuthBus
 import com.pulsestock.app.ui.SettingsScreen
 import com.pulsestock.app.ui.accounts.AccountsScreen
@@ -48,9 +49,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        val uri = intent.data ?: return
+        PulseLog.d("MainActivity", "onNewIntent action=${intent.action} data=${intent.data}")
+        val uri = intent.data ?: run {
+            PulseLog.w("MainActivity", "onNewIntent: no data URI")
+            return
+        }
+        PulseLog.d("MainActivity", "deep link: scheme=${uri.scheme} host=${uri.host} path=${uri.path} query=${uri.query}")
         if (uri.scheme == "pulsestock" && uri.host == "splitwise") {
-            val code = uri.getQueryParameter("code") ?: return
+            val code = uri.getQueryParameter("code") ?: run {
+                PulseLog.e("MainActivity", "Splitwise callback missing 'code' param — full URI: $uri")
+                return
+            }
+            PulseLog.d("MainActivity", "Splitwise code received (${code.length} chars), delivering to bus")
             SplitwiseAuthBus.deliver(code)
         }
     }

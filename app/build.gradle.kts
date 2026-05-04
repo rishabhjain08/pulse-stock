@@ -60,6 +60,8 @@ android {
         buildConfigField("String", "POARVAULT_API_URL", "\"$poarvaultApiUrl\"")
         buildConfigField("String", "POARVAULT_API_KEY", "\"$poarvaultApiKey\"")
         buildConfigField("String", "SPLITWISE_CONSUMER_KEY", "\"$splitwiseConsumerKey\"")
+        // Verbose logcat logging — grep PulseLog to find and remove before production release
+        buildConfigField("Boolean", "VERBOSE_LOGGING", "false")
     }
 
     signingConfigs {
@@ -86,6 +88,7 @@ android {
         }
         debug {
             isDebuggable = true
+            buildConfigField("Boolean", "VERBOSE_LOGGING", "true")
         }
     }
 
@@ -151,6 +154,7 @@ dependencies {
     // Force profileinstaller 1.4.1 — 1.3.x crashes on Android 16 with NoSuchMethodError
     // on PackageManager.PackageInfoFlags.of(long). Pulled transitively by activity-compose.
     implementation(libs.profileinstaller)
+    implementation(libs.androidx.browser)
 
     // Firebase Crashlytics — internal flavor only; production builds have zero Firebase code
     "internalImplementation"(platform(libs.firebase.bom))

@@ -1,8 +1,8 @@
 package com.pulsestock.app.ui.accounts
 
-import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.plaid.link.FastOpenPlaidLink
+import com.pulsestock.app.PulseLog
 import com.plaid.link.Plaid
 import com.plaid.link.configuration.LinkTokenConfiguration
 import com.plaid.link.result.LinkExit
@@ -84,7 +85,11 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
 
     LaunchedEffect(Unit) {
         vm.launchUrl.collect { url ->
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            PulseLog.d("AccountsScreen", "launching OAuth URL via Custom Tab: $url")
+            // Custom Tab routes the pulsestock:// callback URI back to the app via the
+            // Android intent system. A plain ACTION_VIEW intent opens Chrome, which blocks
+            // the redirect to custom schemes and shows a 404.
+            CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
         }
     }
 

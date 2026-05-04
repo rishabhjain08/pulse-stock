@@ -1,5 +1,6 @@
 package com.pulsestock.app.data.poarvault
 
+import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
 
 class PoarVaultRepository(
@@ -49,9 +50,16 @@ class PoarVaultRepository(
     }
 
     suspend fun refreshLiabilities(institutionId: String) {
-        val token = tokens.getAccessToken(institutionId) ?: return
+        val token = tokens.getAccessToken(institutionId) ?: run {
+            PulseLog.w("PoarVaultRepo", "refreshLiabilities: no token for $institutionId")
+            return
+        }
+        PulseLog.d("PoarVaultRepo", "refreshLiabilities: fetching for $institutionId")
         val resp = api.getLiabilities(token)
+        val creditCount = resp.liabilities.credit?.size ?: 0
+        PulseLog.d("PoarVaultRepo", "refreshLiabilities: $creditCount credit liability item(s)")
         resp.liabilities.credit?.forEach { liability ->
+            PulseLog.d("PoarVaultRepo", "refreshLiabilities: accountId=${liability.accountId} statementBal=${liability.lastStatementBalance} minPay=${liability.minimumPaymentAmount} dueDate=${liability.nextPaymentDueDate}")
             db.dao().updateLiability(
                 accountId = liability.accountId,
                 balance = liability.lastStatementBalance,
@@ -62,12 +70,18 @@ class PoarVaultRepository(
     }
 
     suspend fun refreshTransactions(institutionId: String) {
-        val token = tokens.getAccessToken(institutionId) ?: return
+        val token = tokens.getAccessToken(institutionId) ?: run {
+            PulseLog.w("PoarVaultRepo", "refreshTransactions: no token for $institutionId")
+            return
+        }
         val endDate = java.time.LocalDate.now().toString()
         val startDate = java.time.LocalDate.now().minusDays(89).toString()
+        PulseLog.d("PoarVaultRepo", "refreshTransactions: fetching $institutionId $startDate → $endDate")
         val resp = api.getTransactions(token, startDate, endDate)
+        PulseLog.d("PoarVaultRepo", "refreshTransactions: total=${resp.totalTransactions} returned=${resp.transactions.size}")
         val transactions = resp.transactions
             .filter { !it.pending }
+            .also { PulseLog.d("PoarVaultRepo", "refreshTransactions: ${it.size} non-pending transactions") }
             .map { t ->
                 PlaidTransaction(
                     transactionId = t.transactionId,
@@ -80,5 +94,6 @@ class PoarVaultRepository(
                 )
             }
         db.dao().upsertTransactions(transactions)
+        PulseLog.d("PoarVaultRepo", "refreshTransactions: upserted ${transactions.size} transactions")
     }
 }

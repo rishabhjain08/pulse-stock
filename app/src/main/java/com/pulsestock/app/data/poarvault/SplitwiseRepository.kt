@@ -1,5 +1,6 @@
 package com.pulsestock.app.data.poarvault
 
+import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
 
@@ -15,43 +16,63 @@ class SplitwiseRepository(
     fun isConnected(): Boolean = tokens.getSplitwiseToken() != null
 
     suspend fun handleOAuthCode(code: String) {
+        PulseLog.d("SplitwiseRepo", "handleOAuthCode: calling Lambda /splitwise-auth")
         val response = api.exchangeSplitwiseCode(code)
+        PulseLog.d("SplitwiseRepo", "handleOAuthCode: token received from Lambda, storing")
         tokens.putSplitwiseToken(response.access_token)
+        PulseLog.d("SplitwiseRepo", "handleOAuthCode: fetching Splitwise current user")
         val user = splitwiseApi.getCurrentUser(response.access_token)
+        PulseLog.d("SplitwiseRepo", "handleOAuthCode: user ID=${user.user.id}, storing")
         tokens.putSplitwiseUserId(user.user.id)
     }
 
     suspend fun loadExpenses(loadOlder: Boolean = false) {
-        val token = tokens.getSplitwiseToken() ?: return
+        val token = tokens.getSplitwiseToken() ?: run {
+            PulseLog.w("SplitwiseRepo", "loadExpenses: no token stored, skipping")
+            return
+        }
         val userId = tokens.getSplitwiseUserId()
         val offset = if (loadOlder) {
             (db.splitwiseDao().maxPageOffset() ?: -20) + 20
         } else {
             0
         }
+        PulseLog.d("SplitwiseRepo", "loadExpenses: userId=$userId offset=$offset loadOlder=$loadOlder")
         val response = splitwiseApi.getExpenses(token, offset)
+        PulseLog.d("SplitwiseRepo", "loadExpenses: fetched ${response.expenses.size} raw expenses")
         val entities = response.expenses
             .filter { !it.payment && it.deletedAt == null }
+            .also { PulseLog.d("SplitwiseRepo", "loadExpenses: after payment/deleted filter → ${it.size}") }
             .filter { exp ->
                 exp.users.any { u ->
                     u.userId == userId && (u.paidShare.toDoubleOrNull() ?: 0.0) > 0.0
                 }
             }
+            .also { PulseLog.d("SplitwiseRepo", "loadExpenses: after paidShare filter → ${it.size}") }
             .map { it.toEntity(offset) }
         db.splitwiseDao().insertExpenses(entities)
+        PulseLog.d("SplitwiseRepo", "loadExpenses: inserted ${entities.size} expenses (IGNORE conflict)")
         if (!loadOlder) runAutoMatch()
     }
 
     suspend fun runAutoMatch() {
         val unlinked = db.splitwiseDao().getUnlinkedExpenses()
-        if (unlinked.isEmpty()) return
         val recentTx = db.dao().getRecentCreditTransactions()
+        PulseLog.d("SplitwiseRepo", "runAutoMatch: ${unlinked.size} unlinked expenses, ${recentTx.size} CC transactions")
+        if (unlinked.isEmpty()) return
+        var matchCount = 0
         for (expense in unlinked) {
             val matches = recentTx.filter { tx ->
                 abs(tx.amount - expense.totalAmount) < 0.01 && daysBetween(expense.date, tx.date) <= 3
             }
-            if (matches.size == 1) db.splitwiseDao().setAutoMatch(expense.id, matches[0].transactionId)
+            PulseLog.d("SplitwiseRepo", "runAutoMatch: expense ${expense.id} '${expense.description}' \$${expense.totalAmount} → ${matches.size} candidate(s)")
+            if (matches.size == 1) {
+                db.splitwiseDao().setAutoMatch(expense.id, matches[0].transactionId)
+                PulseLog.d("SplitwiseRepo", "runAutoMatch: auto-matched expense ${expense.id} → tx ${matches[0].transactionId} '${matches[0].name}'")
+                matchCount++
+            }
         }
+        PulseLog.d("SplitwiseRepo", "runAutoMatch: done — $matchCount new auto-matches")
     }
 
     fun suggestedMatches(expense: SplitwiseExpense, transactions: List<PlaidTransaction>): List<PlaidTransaction> =

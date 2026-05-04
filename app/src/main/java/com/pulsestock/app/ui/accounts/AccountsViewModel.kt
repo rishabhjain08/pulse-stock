@@ -5,6 +5,7 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsestock.app.BuildConfig
+import com.pulsestock.app.PulseLog
 import com.pulsestock.app.data.poarvault.InstitutionWithAccounts
 import com.pulsestock.app.data.poarvault.PoarVaultApi
 import com.pulsestock.app.data.poarvault.PoarVaultDatabase
@@ -64,7 +65,10 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch {
-            SplitwiseAuthBus.code.collect { code -> handleOAuthCode(code) }
+            SplitwiseAuthBus.code.collect { code ->
+                PulseLog.d("AccountsVM", "SplitwiseAuthBus delivered code (${code.length} chars)")
+                handleOAuthCode(code)
+            }
         }
     }
 
@@ -123,6 +127,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             "?response_type=code" +
             "&client_id=${BuildConfig.SPLITWISE_CONSUMER_KEY}" +
             "&redirect_uri=pulsestock%3A%2F%2Fsplitwise%2Fcallback"
+        PulseLog.d("AccountsVM", "connectSplitwise: emitting OAuth URL (client_id=${BuildConfig.SPLITWISE_CONSUMER_KEY})")
         viewModelScope.launch { _launchUrl.emit(url) }
     }
 
@@ -137,11 +142,14 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
 
     private fun handleOAuthCode(code: String) {
         viewModelScope.launch {
+            PulseLog.d("AccountsVM", "handleOAuthCode: starting token exchange")
             _uiState.value = _uiState.value.copy(isSplitwiseConnecting = true)
             try {
                 splitwiseRepo.handleOAuthCode(code)
+                PulseLog.d("AccountsVM", "handleOAuthCode: success — Splitwise connected")
                 _uiState.value = _uiState.value.copy(isSplitwiseConnected = true)
             } catch (e: Exception) {
+                PulseLog.e("AccountsVM", "handleOAuthCode: failed", e)
                 _uiState.value = _uiState.value.copy(error = "Splitwise connect failed: ${e.message}")
             } finally {
                 _uiState.value = _uiState.value.copy(isSplitwiseConnecting = false)
