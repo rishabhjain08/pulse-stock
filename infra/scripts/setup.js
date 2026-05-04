@@ -19,9 +19,11 @@ const path = require('path');
 
   // ── SSM parameters ────────────────────────────────────────────────────────
   console.log('==> SSM parameters');
-  await putParam('/poarvault/plaid-client-id', process.env.PLAID_CLIENT_ID || (() => { throw new Error('PLAID_CLIENT_ID missing') })());
-  await putParam('/poarvault/plaid-secret',    process.env.PLAID_SECRET    || (() => { throw new Error('PLAID_SECRET missing') })());
-  await putParam('/poarvault/plaid-env',       process.env.PLAID_ENV || 'sandbox', 'String');
+  await putParam('/poarvault/plaid-client-id',         process.env.PLAID_CLIENT_ID           || (() => { throw new Error('PLAID_CLIENT_ID missing') })());
+  await putParam('/poarvault/plaid-secret',            process.env.PLAID_SECRET              || (() => { throw new Error('PLAID_SECRET missing') })());
+  await putParam('/poarvault/plaid-env',               process.env.PLAID_ENV || 'sandbox', 'String');
+  await putParam('/poarvault/splitwise-consumer-key',  process.env.SPLITWISE_CONSUMER_KEY    || (() => { throw new Error('SPLITWISE_CONSUMER_KEY missing') })());
+  await putParam('/poarvault/splitwise-consumer-secret', process.env.SPLITWISE_CONSUMER_SECRET || (() => { throw new Error('SPLITWISE_CONSUMER_SECRET missing') })());
 
   const existingKey = await getParam('/poarvault/api-key');
   if (!existingKey) {
