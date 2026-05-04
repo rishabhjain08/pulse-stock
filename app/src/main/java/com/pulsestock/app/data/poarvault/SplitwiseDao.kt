@@ -53,6 +53,9 @@ interface SplitwiseDao {
     @Query("UPDATE splitwise_expenses SET isDismissed = 1 WHERE id = :expenseId")
     suspend fun dismiss(expenseId: Long)
 
+    @Query("UPDATE splitwise_expenses SET isDismissed = 0 WHERE id = :expenseId")
+    suspend fun undismiss(expenseId: Long)
+
     @Query("UPDATE splitwise_expenses SET isAutoMatched = 1 WHERE id = :expenseId")
     suspend fun setAutoMatchPending(expenseId: Long)
 

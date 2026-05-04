@@ -96,6 +96,8 @@ class SplitwiseRepository(
 
     suspend fun dismiss(expenseId: Long) = db.splitwiseDao().dismiss(expenseId)
 
+    suspend fun undismiss(expenseId: Long) = db.splitwiseDao().undismiss(expenseId)
+
     suspend fun acceptMatch(expenseId: Long) = db.splitwiseDao().clearAutoMatch(expenseId)
 
     suspend fun rejectMatch(expenseId: Long) {

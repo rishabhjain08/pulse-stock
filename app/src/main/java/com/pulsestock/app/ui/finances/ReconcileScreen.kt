@@ -198,6 +198,7 @@ fun ReconcileScreen(
                         onReject = { vm.rejectMatch(item.expense.id) },
                         onLink = { vm.openLinkSheet(item) },
                         onDismiss = { vm.dismiss(item.expense.id) },
+                        onUndismiss = { vm.undismiss(item.expense.id) },
                         onUnlink = { plaidId -> vm.unlinkTransaction(item.expense.id, plaidId) },
                     )
                 }
@@ -241,6 +242,7 @@ private fun ExpenseCard(
     onReject: () -> Unit,
     onLink: () -> Unit,
     onDismiss: () -> Unit,
+    onUndismiss: () -> Unit,
     onUnlink: (String) -> Unit,
 ) {
     Card(
@@ -328,13 +330,16 @@ private fun ExpenseCard(
                     }
                 }
 
-                // Unlinked: standard Link / Dismiss actions
                 else -> {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
+                        if (item.isDismissed) {
+                            OutlinedButton(onClick = onUndismiss) { Text("Undismiss") }
+                        } else {
+                            OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
+                        }
                         Spacer(Modifier.width(8.dp))
                         Button(onClick = onLink) { Text("Link…") }
                     }

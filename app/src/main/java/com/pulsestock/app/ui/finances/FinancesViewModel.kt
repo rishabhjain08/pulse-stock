@@ -145,6 +145,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { splitwiseRepo.dismiss(expenseId) }
     }
 
+    fun undismiss(expenseId: Long) {
+        viewModelScope.launch { splitwiseRepo.undismiss(expenseId) }
+    }
+
     fun acceptMatch(expenseId: Long) {
         viewModelScope.launch { splitwiseRepo.acceptMatch(expenseId) }
     }
