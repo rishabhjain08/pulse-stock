@@ -81,6 +81,16 @@ fun ReconcileScreen(
         vm.dismissError()
     }
 
+    // When sync finishes while the link sheet is open, refresh its transaction list.
+    LaunchedEffect(state.isSyncing) {
+        if (!state.isSyncing) {
+            val openSheet = state.linkSheet ?: return@LaunchedEffect
+            val item = state.allWithLinks.find { it.expense.id == openSheet.expense.id }
+                ?: return@LaunchedEffect
+            vm.openLinkSheet(item)
+        }
+    }
+
     Scaffold(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarState) },
@@ -411,7 +421,7 @@ private fun LinkBottomSheet(
         )
         if (linkSheet.all.isEmpty()) {
             Text(
-                text = "No transactions found. Sync first.",
+                text = "No CC transactions found — tap the sync button at the top to load them.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
