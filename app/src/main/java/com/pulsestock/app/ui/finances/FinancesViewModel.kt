@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+enum class ReconcileFilter { TO_LINK, LINKED, DISMISSED, ALL }
+
 data class LinkSheetState(
     val expense: SplitwiseExpense,
     val suggested: List<PlaidTransaction>,
@@ -28,16 +30,19 @@ data class FinancesUiState(
     val creditAccounts: List<AccountEntity> = emptyList(),
     val allWithLinks: List<ExpenseWithLinks> = emptyList(),
     val inboxCount: Int = 0,
-    val showAll: Boolean = false,
+    val filter: ReconcileFilter = ReconcileFilter.TO_LINK,
     val isSplitwiseConnected: Boolean = false,
     val isSyncing: Boolean = false,
     val isLoadingMore: Boolean = false,
     val linkSheet: LinkSheetState? = null,
     val error: String? = null,
 ) {
-    val displayedList: List<ExpenseWithLinks>
-        get() = if (showAll) allWithLinks
-                else allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
+    val displayedList: List<ExpenseWithLinks> get() = when (filter) {
+        ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
+        ReconcileFilter.LINKED    -> allWithLinks.filter { it.isReconciled }
+        ReconcileFilter.DISMISSED -> allWithLinks.filter { it.isDismissed }
+        ReconcileFilter.ALL       -> allWithLinks
+    }
 }
 
 class FinancesViewModel(application: Application) : AndroidViewModel(application) {
@@ -105,8 +110,8 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun toggleShowAll() {
-        _uiState.value = _uiState.value.copy(showAll = !_uiState.value.showAll)
+    fun setFilter(filter: ReconcileFilter) {
+        _uiState.value = _uiState.value.copy(filter = filter)
     }
 
     fun openLinkSheet(item: ExpenseWithLinks) {

@@ -10,11 +10,11 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface SplitwiseDao {
 
-    // Single query drives everything: all non-dismissed expenses with their linked CC transactions.
+    // All expenses including dismissed, with their linked CC transactions.
     // Room re-emits whenever either splitwise_expenses or splitwise_plaid_links changes.
     @Transaction
-    @Query("SELECT * FROM splitwise_expenses WHERE isDismissed = 0 ORDER BY date DESC")
-    fun watchAllNonDismissedWithLinks(): Flow<List<ExpenseWithLinks>>
+    @Query("SELECT * FROM splitwise_expenses ORDER BY date DESC")
+    fun watchAllWithLinks(): Flow<List<ExpenseWithLinks>>
 
     // Inbox count: expenses that still need action (no links yet, or pending auto-match approval)
     @Query("""

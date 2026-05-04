@@ -23,12 +23,15 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,9 +39,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -130,23 +130,37 @@ fun ReconcileScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Filter toggle
+            // Filter chips
             item {
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        selected = !state.showAll,
-                        onClick = { if (state.showAll) vm.toggleShowAll() },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                        label = {
-                            val unlinkedCount = state.allWithLinks.count { it.isUnlinked || it.isPendingAutoMatch }
-                            Text(if (unlinkedCount > 0) "To Link ($unlinkedCount)" else "To Link")
-                        },
+                val toLink = state.allWithLinks.count { it.isUnlinked || it.isPendingAutoMatch }
+                val linked = state.allWithLinks.count { it.isReconciled }
+                val dismissed = state.allWithLinks.count { it.isDismissed }
+                val all = state.allWithLinks.size
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = state.filter == ReconcileFilter.TO_LINK,
+                        onClick = { vm.setFilter(ReconcileFilter.TO_LINK) },
+                        label = { Text(if (toLink > 0) "To Link ($toLink)" else "To Link") },
                     )
-                    SegmentedButton(
-                        selected = state.showAll,
-                        onClick = { if (!state.showAll) vm.toggleShowAll() },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                        label = { Text("All (${state.allWithLinks.size})") },
+                    FilterChip(
+                        selected = state.filter == ReconcileFilter.LINKED,
+                        onClick = { vm.setFilter(ReconcileFilter.LINKED) },
+                        label = { Text(if (linked > 0) "Linked ($linked)" else "Linked") },
+                    )
+                    FilterChip(
+                        selected = state.filter == ReconcileFilter.DISMISSED,
+                        onClick = { vm.setFilter(ReconcileFilter.DISMISSED) },
+                        label = { Text(if (dismissed > 0) "Dismissed ($dismissed)" else "Dismissed") },
+                    )
+                    FilterChip(
+                        selected = state.filter == ReconcileFilter.ALL,
+                        onClick = { vm.setFilter(ReconcileFilter.ALL) },
+                        label = { Text("All ($all)") },
                     )
                 }
             }
@@ -154,8 +168,12 @@ fun ReconcileScreen(
             if (state.displayedList.isEmpty()) {
                 item {
                     Text(
-                        text = if (state.showAll) "No Splitwise expenses loaded. Tap sync to fetch them."
-                               else "All caught up! No expenses left to link.",
+                        text = when (state.filter) {
+                            ReconcileFilter.TO_LINK   -> "All caught up — no expenses left to link."
+                            ReconcileFilter.LINKED    -> "No linked expenses yet."
+                            ReconcileFilter.DISMISSED -> "No dismissed expenses."
+                            ReconcileFilter.ALL       -> "No Splitwise expenses loaded. Tap sync to fetch them."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),

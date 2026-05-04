@@ -47,9 +47,10 @@ data class ExpenseWithLinks(
     )
     val linkedTransactions: List<PlaidTransaction>,
 ) {
-    val isReconciled: Boolean get() = linkedTransactions.isNotEmpty() && !expense.isAutoMatched
-    val isPendingAutoMatch: Boolean get() = expense.isAutoMatched && linkedTransactions.isNotEmpty()
-    val isUnlinked: Boolean get() = linkedTransactions.isEmpty() && !expense.isAutoMatched
+    val isDismissed: Boolean get() = expense.isDismissed
+    val isReconciled: Boolean get() = !isDismissed && linkedTransactions.isNotEmpty() && !expense.isAutoMatched
+    val isPendingAutoMatch: Boolean get() = !isDismissed && expense.isAutoMatched && linkedTransactions.isNotEmpty()
+    val isUnlinked: Boolean get() = !isDismissed && linkedTransactions.isEmpty() && !expense.isAutoMatched
 }
 
 @Entity(tableName = "plaid_transactions")

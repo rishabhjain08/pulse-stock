@@ -11,7 +11,7 @@ class SplitwiseRepository(
     private val db: PoarVaultDatabase,
     private val tokens: TokenStore,
 ) {
-    val allWithLinks: Flow<List<ExpenseWithLinks>> = db.splitwiseDao().watchAllNonDismissedWithLinks()
+    val allWithLinks: Flow<List<ExpenseWithLinks>> = db.splitwiseDao().watchAllWithLinks()
     val inboxCount: Flow<Int> = db.splitwiseDao().watchInboxCount()
 
     fun isConnected(): Boolean = tokens.getSplitwiseToken() != null
