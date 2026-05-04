@@ -120,6 +120,11 @@ fun FinancesScreen(
                 items(state.creditAccounts, key = { it.accountId }) { account ->
                     CreditCardSummaryCard(account, currencyFmt)
                 }
+                if (state.creditAccounts.size > 1) {
+                    item {
+                        CreditCardTotalsRow(accounts = state.creditAccounts, currencyFmt = currencyFmt)
+                    }
+                }
             }
 
             if (state.isSplitwiseConnected) {
@@ -194,13 +199,13 @@ internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFo
             Row(modifier = Modifier.fillMaxWidth()) {
                 LabeledAmount(
                     label = "Statement",
-                    amount = account.statementBalance ?: account.currentBalance,
+                    amount = account.statementBalance,
                     currencyFmt = currencyFmt,
                     modifier = Modifier.weight(1f),
                 )
                 LabeledAmount(
-                    label = "Min Payment",
-                    amount = account.minimumPayment,
+                    label = "Current",
+                    amount = account.currentBalance,
                     currencyFmt = currencyFmt,
                     modifier = Modifier.weight(1f),
                 )
@@ -218,6 +223,31 @@ internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFo
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CreditCardTotalsRow(accounts: List<AccountEntity>, currencyFmt: NumberFormat) {
+    val totalStatement = accounts.sumOf { it.statementBalance ?: 0.0 }
+    val totalCurrent = accounts.sumOf { it.currentBalance ?: 0.0 }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+    ) {
+        LabeledAmount(
+            label = "Total Statement",
+            amount = totalStatement,
+            currencyFmt = currencyFmt,
+            modifier = Modifier.weight(1f),
+        )
+        LabeledAmount(
+            label = "Total Current",
+            amount = totalCurrent,
+            currencyFmt = currencyFmt,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.weight(1f))
     }
 }
 
