@@ -23,17 +23,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.pulsestock.app.PulseLog
 import com.pulsestock.app.data.poarvault.SplitwiseAuthBus
 import com.pulsestock.app.ui.SettingsScreen
 import com.pulsestock.app.ui.accounts.AccountsScreen
 import com.pulsestock.app.ui.finances.FinancesScreen
 import com.pulsestock.app.ui.finances.FinancesViewModel
+import com.pulsestock.app.ui.finances.ReconcileScreen
 import com.pulsestock.app.ui.theme.PulseStockTheme
 
 class MainActivity : ComponentActivity() {
@@ -69,8 +70,17 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScreen() {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var showReconcile by rememberSaveable { mutableStateOf(false) }
     val financesVm: FinancesViewModel = viewModel()
     val financesState by financesVm.uiState.collectAsState()
+
+    if (showReconcile) {
+        ReconcileScreen(
+            vm = financesVm,
+            onBack = { showReconcile = false },
+        )
+        return
+    }
 
     Scaffold(
         bottomBar = {
@@ -112,7 +122,11 @@ private fun MainScreen() {
             when (selectedTab) {
                 0 -> SettingsScreen(modifier = Modifier.padding(innerPadding))
                 1 -> AccountsScreen(modifier = Modifier.padding(innerPadding))
-                2 -> FinancesScreen(modifier = Modifier.padding(innerPadding))
+                2 -> FinancesScreen(
+                    vm = financesVm,
+                    onReconcile = { showReconcile = true },
+                    modifier = Modifier.padding(innerPadding),
+                )
             }
         }
     }

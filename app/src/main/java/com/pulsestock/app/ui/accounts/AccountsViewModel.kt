@@ -146,8 +146,9 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             _uiState.value = _uiState.value.copy(isSplitwiseConnecting = true)
             try {
                 splitwiseRepo.handleOAuthCode(code)
-                PulseLog.d("AccountsVM", "handleOAuthCode: success — Splitwise connected")
+                PulseLog.d("AccountsVM", "handleOAuthCode: success — Splitwise connected, loading initial expenses")
                 _uiState.value = _uiState.value.copy(isSplitwiseConnected = true)
+                splitwiseRepo.loadExpenses(loadOlder = false)
             } catch (e: Exception) {
                 PulseLog.e("AccountsVM", "handleOAuthCode: failed", e)
                 _uiState.value = _uiState.value.copy(error = "Splitwise connect failed: ${e.message}")
