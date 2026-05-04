@@ -203,13 +203,15 @@ fun ReconcileScreen(
                     )
                 }
 
-                item {
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        if (state.isLoadingMore) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        } else {
-                            TextButton(onClick = vm::loadMore) {
-                                Text("Load older expenses")
+                if (state.filter == ReconcileFilter.TO_LINK || state.filter == ReconcileFilter.ALL) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            if (state.isLoadingMore) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            } else {
+                                TextButton(onClick = vm::loadMore) {
+                                    Text("Load older expenses")
+                                }
                             }
                         }
                     }
