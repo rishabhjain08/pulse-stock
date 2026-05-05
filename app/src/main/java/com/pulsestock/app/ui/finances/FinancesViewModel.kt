@@ -13,6 +13,7 @@ import com.pulsestock.app.data.poarvault.SplitwiseApi
 import com.pulsestock.app.data.poarvault.SplitwiseExpense
 import com.pulsestock.app.data.poarvault.SplitwiseRepository
 import com.pulsestock.app.data.poarvault.TokenStore
+import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -88,8 +89,12 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             _uiState
                 .map { it.selectedMonth }
                 .distinctUntilChanged()
-                .flatMapLatest { month -> splitwiseRepo.watchMonthlyReimbursable(month) }
+                .flatMapLatest { month ->
+                    PulseLog.d("FinancesVM", "reimbursable: querying month=$month (prefix=${month})")
+                    splitwiseRepo.watchMonthlyReimbursable(month)
+                }
                 .collect { reimbursable ->
+                    PulseLog.d("FinancesVM", "reimbursable: month=${_uiState.value.selectedMonth} → $$reimbursable")
                     _uiState.value = _uiState.value.copy(monthlyReimbursable = reimbursable)
                 }
         }

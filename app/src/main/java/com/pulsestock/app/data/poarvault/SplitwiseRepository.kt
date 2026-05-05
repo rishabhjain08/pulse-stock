@@ -55,6 +55,9 @@ class SplitwiseRepository(
             }
             .also { PulseLog.d("SplitwiseRepo", "loadExpenses: after paidShare filter → ${it.size}") }
             .map { it.toEntity(offset, userId) }
+        entities.forEach { e ->
+            PulseLog.d("SplitwiseRepo", "loadExpenses: entity id=${e.id} '${e.description}' date=${e.date} paid=${e.paidShare} owned=${e.ownedShare}")
+        }
         db.splitwiseDao().insertExpenses(entities)
         // UPDATE shares separately — INSERT IGNORE skips existing rows, leaving paidShare/ownedShare stale
         entities.forEach { db.splitwiseDao().updateShares(it.id, it.paidShare, it.ownedShare) }

@@ -101,6 +101,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             _uiState.value = _uiState.value.copy(isSyncing = true)
             try {
                 repo.refreshAll()
+                if (splitwiseRepo.isConnected()) splitwiseRepo.loadExpenses(loadOlder = false)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = "Sync failed: ${e.message}")
             } finally {
