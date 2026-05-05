@@ -48,9 +48,16 @@ class TokenStore(context: Context) {
     fun getSplitwiseUserId(): Long =
         prefs.getString(KEY_SPLITWISE_USER_ID, null)?.toLongOrNull() ?: -1L
 
+    fun getLastSplitwiseSyncAt(): String? =
+        prefs.getString(KEY_SPLITWISE_LAST_SYNC, null)
+
+    fun putLastSplitwiseSyncAt(isoTimestamp: String) =
+        prefs.edit().putString(KEY_SPLITWISE_LAST_SYNC, isoTimestamp).apply()
+
     companion object {
         private const val KEY_PASSPHRASE = "db_passphrase"
         private const val KEY_SPLITWISE_TOKEN = "splitwise_token"
         private const val KEY_SPLITWISE_USER_ID = "splitwise_user_id"
+        private const val KEY_SPLITWISE_LAST_SYNC = "splitwise_last_sync"
     }
 }

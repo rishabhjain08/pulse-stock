@@ -20,8 +20,18 @@ class SplitwiseApi {
     suspend fun getCurrentUser(token: String): SplitwiseCurrentUserResponse =
         call(get("/get_current_user", token))
 
-    suspend fun getExpenses(token: String, offset: Int = 0, limit: Int = 20): SplitwiseExpensesResponse =
-        call(get("/get_expenses?limit=$limit&offset=$offset", token))
+    suspend fun getExpenses(
+        token: String,
+        offset: Int = 0,
+        limit: Int = 20,
+        updatedAfter: String? = null,
+    ): SplitwiseExpensesResponse {
+        val params = buildString {
+            append("/get_expenses?limit=$limit&offset=$offset")
+            if (updatedAfter != null) append("&updated_after=${updatedAfter}")
+        }
+        return call(get(params, token))
+    }
 
     private suspend inline fun <reified T> call(request: Request): T = withContext(Dispatchers.IO) {
         val path = request.url.encodedPath

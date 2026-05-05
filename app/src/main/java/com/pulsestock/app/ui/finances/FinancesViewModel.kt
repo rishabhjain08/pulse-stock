@@ -76,9 +76,9 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             viewModelScope.launch {
                 _uiState.value = _uiState.value.copy(isSplitwiseLoading = true)
                 try {
-                    splitwiseRepo.loadExpenses(loadOlder = false)
+                    splitwiseRepo.refreshExpenses()
                 } catch (e: Exception) {
-                    PulseLog.w("FinancesVM", "auto-load Splitwise failed: ${e.message}")
+                    PulseLog.w("FinancesVM", "auto-refresh Splitwise failed: ${e.message}")
                 } finally {
                     _uiState.value = _uiState.value.copy(isSplitwiseLoading = false)
                 }
@@ -133,7 +133,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     repo.refreshTransactions(id)
                     repo.refreshLiabilities(id)
                 }
-                splitwiseRepo.loadExpenses(loadOlder = false)
+                splitwiseRepo.refreshExpenses()
                 _uiState.value = _uiState.value.copy(isSplitwiseConnected = splitwiseRepo.isConnected())
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = "Sync failed: ${e.message}")
@@ -147,7 +147,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingMore = true)
             try {
-                splitwiseRepo.loadExpenses(loadOlder = true)
+                splitwiseRepo.loadOlderExpenses()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = "Load failed: ${e.message}")
             } finally {
@@ -224,12 +224,15 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSplitwiseLoading = true)
             try {
-                var fetched: Int
                 do {
-                    fetched = splitwiseRepo.loadExpenses(loadOlder = true)
-                    val target = _uiState.value.selectedMonth.toString()
-                    if (db.splitwiseDao().countExpensesForMonth(target) > 0) break
-                } while (fetched > 0)
+                    val result = splitwiseRepo.loadOlderExpenses()
+                    val target = _uiState.value.selectedMonth
+                    if (db.splitwiseDao().countExpensesForMonth(target.toString()) > 0) break
+                    // Stop if we've already scanned raw expenses older than the target month —
+                    // the target month has no paidShare > 0 expenses
+                    val oldestRaw = result.oldestRawDate ?: break
+                    if (YearMonth.parse(oldestRaw.take(7)).isBefore(target)) break
+                } while (result.rawCount > 0)
             } catch (e: Exception) {
                 PulseLog.w("FinancesVM", "loadOlderIfNeeded failed: ${e.message}")
             } finally {

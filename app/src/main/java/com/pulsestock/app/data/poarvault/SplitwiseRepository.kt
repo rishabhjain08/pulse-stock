@@ -3,8 +3,13 @@ package com.pulsestock.app.data.poarvault
 import androidx.room.withTransaction
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
+import java.time.Instant
 import java.time.YearMonth
 import kotlin.math.abs
+
+// Returned by loadExpenses(loadOlder=true) so the caller can detect end-of-history
+// and avoid fetching past a target month that has no paid expenses.
+data class LoadOlderResult(val rawCount: Int, val oldestRawDate: String?)
 
 class SplitwiseRepository(
     private val api: PoarVaultApi,
@@ -31,40 +36,70 @@ class SplitwiseRepository(
         tokens.putSplitwiseUserId(user.user.id)
     }
 
-    // Returns count of raw expenses fetched from API (0 = end of history)
-    suspend fun loadExpenses(loadOlder: Boolean = false): Int {
+    // Incremental refresh using updated_after — fetches everything added/changed since last sync.
+    // On first run (no lastSyncedAt) falls back to a single page to avoid downloading all history.
+    // Call this from VM init and from Accounts sync.
+    suspend fun refreshExpenses() {
         val token = tokens.getSplitwiseToken() ?: run {
-            PulseLog.w("SplitwiseRepo", "loadExpenses: no token, skipping")
-            return 0
+            PulseLog.w("SplitwiseRepo", "refreshExpenses: no token, skipping")
+            return
         }
         val userId = tokens.getSplitwiseUserId()
-        val offset = if (loadOlder) {
-            (db.splitwiseDao().maxPageOffset() ?: -20) + 20
+        val updatedAfter = tokens.getLastSplitwiseSyncAt()
+        val syncStartedAt = Instant.now().toString()
+        PulseLog.d("SplitwiseRepo", "refreshExpenses: userId=$userId updatedAfter=$updatedAfter")
+
+        if (updatedAfter != null) {
+            // Incremental: loop pages until fewer than limit results (all changes fetched)
+            var offset = 0
+            var batchSize: Int
+            do {
+                val response = splitwiseApi.getExpenses(token, offset, updatedAfter = updatedAfter)
+                batchSize = response.expenses.size
+                PulseLog.d("SplitwiseRepo", "refreshExpenses: page offset=$offset → $batchSize raw")
+                processAndStore(response.expenses, pageOffset = 0, userId)
+                offset += batchSize
+            } while (batchSize == 20)
         } else {
-            0
+            // First sync: single page, historical navigation will load older pages on demand
+            val response = splitwiseApi.getExpenses(token, 0)
+            PulseLog.d("SplitwiseRepo", "refreshExpenses: first sync → ${response.expenses.size} raw")
+            processAndStore(response.expenses, pageOffset = 0, userId)
         }
-        PulseLog.d("SplitwiseRepo", "loadExpenses: userId=$userId offset=$offset loadOlder=$loadOlder")
+
+        tokens.putLastSplitwiseSyncAt(syncStartedAt)
+        runAutoMatch()
+    }
+
+    // Offset-based historical pagination. Returns raw count + oldest raw date so the VM
+    // can stop early when it has scanned past the target month.
+    suspend fun loadOlderExpenses(): LoadOlderResult {
+        val token = tokens.getSplitwiseToken() ?: return LoadOlderResult(0, null)
+        val userId = tokens.getSplitwiseUserId()
+        val offset = (db.splitwiseDao().maxPageOffset() ?: -20) + 20
+        PulseLog.d("SplitwiseRepo", "loadOlderExpenses: offset=$offset")
         val response = splitwiseApi.getExpenses(token, offset)
-        PulseLog.d("SplitwiseRepo", "loadExpenses: fetched ${response.expenses.size} raw expenses")
-        val entities = response.expenses
+        PulseLog.d("SplitwiseRepo", "loadOlderExpenses: ${response.expenses.size} raw")
+        processAndStore(response.expenses, pageOffset = offset, userId)
+        val oldestDate = response.expenses.minOfOrNull { it.date.take(10) }
+        return LoadOlderResult(response.expenses.size, oldestDate)
+    }
+
+    private suspend fun processAndStore(
+        rawExpenses: List<SplitwiseExpenseApi>,
+        pageOffset: Int,
+        userId: Long,
+    ) {
+        val entities = rawExpenses
             .filter { !it.payment && it.deletedAt == null }
-            .also { PulseLog.d("SplitwiseRepo", "loadExpenses: after payment/deleted filter → ${it.size}") }
-            .filter { exp ->
-                exp.users.any { u ->
-                    u.userId == userId && (u.paidShare.toDoubleOrNull() ?: 0.0) > 0.0
-                }
-            }
-            .also { PulseLog.d("SplitwiseRepo", "loadExpenses: after paidShare filter → ${it.size}") }
-            .map { it.toEntity(offset, userId) }
+            .filter { exp -> exp.users.any { u -> u.userId == userId && (u.paidShare.toDoubleOrNull() ?: 0.0) > 0.0 } }
+            .map { it.toEntity(pageOffset, userId) }
         entities.forEach { e ->
-            PulseLog.d("SplitwiseRepo", "loadExpenses: entity id=${e.id} '${e.description}' date=${e.date} paid=${e.paidShare} owned=${e.ownedShare}")
+            PulseLog.d("SplitwiseRepo", "store: id=${e.id} '${e.description}' date=${e.date} paid=${e.paidShare} owned=${e.ownedShare}")
         }
         db.splitwiseDao().insertExpenses(entities)
-        // UPDATE shares separately — INSERT IGNORE skips existing rows, leaving paidShare/ownedShare stale
         entities.forEach { db.splitwiseDao().updateShares(it.id, it.paidShare, it.ownedShare) }
-        PulseLog.d("SplitwiseRepo", "loadExpenses: inserted/updated ${entities.size} expenses")
-        if (!loadOlder) runAutoMatch()
-        return response.expenses.size
+        PulseLog.d("SplitwiseRepo", "processAndStore: stored ${entities.size} of ${rawExpenses.size}")
     }
 
     suspend fun runAutoMatch() {
@@ -83,7 +118,6 @@ class SplitwiseRepository(
                     db.splitwiseDao().insertLink(SplitwisePlaidLink(expense.id, matches[0].transactionId))
                     db.splitwiseDao().setAutoMatchPending(expense.id)
                 }
-                PulseLog.d("SplitwiseRepo", "runAutoMatch: matched expense ${expense.id} → tx ${matches[0].transactionId}")
                 matchCount++
             }
         }
@@ -120,6 +154,7 @@ class SplitwiseRepository(
 
     suspend fun disconnect() {
         tokens.removeSplitwiseToken()
+        tokens.putLastSplitwiseSyncAt("") // reset sync cursor on disconnect
         db.withTransaction {
             db.splitwiseDao().nukeAllLinks()
             db.splitwiseDao().nukeAllExpenses()
