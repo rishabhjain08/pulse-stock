@@ -17,6 +17,7 @@ import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -53,6 +54,7 @@ data class FinancesUiState(
     }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FinancesViewModel(application: Application) : AndroidViewModel(application) {
 
     private val ctx = application.applicationContext

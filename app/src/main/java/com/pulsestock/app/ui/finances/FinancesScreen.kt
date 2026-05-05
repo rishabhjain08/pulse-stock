@@ -16,7 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -150,7 +150,7 @@ private fun ReconcileEntryCard(count: Int, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Default.CompareArrows,
+                imageVector = Icons.AutoMirrored.Filled.CompareArrows,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer
