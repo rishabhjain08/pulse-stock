@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.data.poarvault.AccountEntity
 import java.text.NumberFormat
 import java.util.Locale
@@ -127,7 +128,7 @@ fun FinancesScreen(
                 }
             }
 
-            if (state.isSplitwiseConnected) {
+            if (state.isSplitwiseConnected && BuildConfig.RECONCILIATION_ENABLED) {
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     ReconcileEntryCard(count = state.inboxCount, onClick = onReconcile)

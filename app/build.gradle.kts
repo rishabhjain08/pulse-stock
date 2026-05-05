@@ -62,6 +62,8 @@ android {
         buildConfigField("String", "SPLITWISE_CONSUMER_KEY", "\"$splitwiseConsumerKey\"")
         // Verbose logcat logging — grep PulseLog to find and remove before production release
         buildConfigField("Boolean", "VERBOSE_LOGGING", "false")
+        // Splitwise reconciliation UI — not ready for users yet
+        buildConfigField("Boolean", "RECONCILIATION_ENABLED", "false")
     }
 
     signingConfigs {

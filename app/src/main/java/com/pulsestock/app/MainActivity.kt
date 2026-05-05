@@ -102,7 +102,7 @@ private fun MainScreen() {
                     onClick = { selectedTab = 2 },
                     icon = {
                         BadgedBox(badge = {
-                            if (financesState.inboxCount > 0) {
+                            if (BuildConfig.RECONCILIATION_ENABLED && financesState.inboxCount > 0) {
                                 Badge { Text(financesState.inboxCount.toString()) }
                             }
                         }) {
@@ -124,7 +124,7 @@ private fun MainScreen() {
                 1 -> AccountsScreen(modifier = Modifier.padding(innerPadding))
                 2 -> FinancesScreen(
                     vm = financesVm,
-                    onReconcile = { showReconcile = true },
+                    onReconcile = { if (BuildConfig.RECONCILIATION_ENABLED) showReconcile = true },
                     modifier = Modifier.padding(innerPadding),
                 )
             }
