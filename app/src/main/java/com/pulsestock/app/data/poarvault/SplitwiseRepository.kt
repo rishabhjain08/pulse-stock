@@ -71,16 +71,18 @@ class SplitwiseRepository(
         runAutoMatch()
     }
 
-    // Offset-based historical pagination. Returns raw count + oldest raw date so the VM
-    // can stop early when it has scanned past the target month.
+    // Offset-based historical pagination. Advances a TokenStore watermark after every fetch
+    // so pages with 0 stored expenses (paidShare filter) still advance the cursor — preventing
+    // the same dead page from being re-fetched on the next navigation.
     suspend fun loadOlderExpenses(): LoadOlderResult {
         val token = tokens.getSplitwiseToken() ?: return LoadOlderResult(0, null)
         val userId = tokens.getSplitwiseUserId()
-        val offset = (db.splitwiseDao().maxPageOffset() ?: -20) + 20
+        val offset = tokens.getMaxFetchedOffset() + 20
         PulseLog.d("SplitwiseRepo", "loadOlderExpenses: offset=$offset")
         val response = splitwiseApi.getExpenses(token, offset)
         PulseLog.d("SplitwiseRepo", "loadOlderExpenses: ${response.expenses.size} raw")
         processAndStore(response.expenses, pageOffset = offset, userId)
+        tokens.putMaxFetchedOffset(offset)  // advance regardless of how many were stored
         val oldestDate = response.expenses.minOfOrNull { it.date.take(10) }
         return LoadOlderResult(response.expenses.size, oldestDate)
     }
@@ -154,12 +156,13 @@ class SplitwiseRepository(
 
     suspend fun disconnect() {
         tokens.removeSplitwiseToken()
-        tokens.putLastSplitwiseSyncAt("") // reset sync cursor on disconnect
+        tokens.removeLastSplitwiseSyncAt()
+        tokens.removeMaxFetchedOffset()
         db.withTransaction {
             db.splitwiseDao().nukeAllLinks()
             db.splitwiseDao().nukeAllExpenses()
         }
-        PulseLog.d("SplitwiseRepo", "disconnect: token cleared and DB wiped")
+        PulseLog.d("SplitwiseRepo", "disconnect: token + cursors cleared, DB wiped")
     }
 
     private fun daysBetween(d1: String, d2: String): Long {

@@ -54,10 +54,25 @@ class TokenStore(context: Context) {
     fun putLastSplitwiseSyncAt(isoTimestamp: String) =
         prefs.edit().putString(KEY_SPLITWISE_LAST_SYNC, isoTimestamp).apply()
 
+    fun removeLastSplitwiseSyncAt() =
+        prefs.edit().remove(KEY_SPLITWISE_LAST_SYNC).apply()
+
+    // Tracks the furthest page offset fetched during historical loading,
+    // regardless of how many expenses passed the paidShare filter on that page.
+    fun getMaxFetchedOffset(): Int =
+        prefs.getString(KEY_SPLITWISE_MAX_OFFSET, null)?.toIntOrNull() ?: -20
+
+    fun putMaxFetchedOffset(offset: Int) =
+        prefs.edit().putString(KEY_SPLITWISE_MAX_OFFSET, offset.toString()).apply()
+
+    fun removeMaxFetchedOffset() =
+        prefs.edit().remove(KEY_SPLITWISE_MAX_OFFSET).apply()
+
     companion object {
         private const val KEY_PASSPHRASE = "db_passphrase"
         private const val KEY_SPLITWISE_TOKEN = "splitwise_token"
         private const val KEY_SPLITWISE_USER_ID = "splitwise_user_id"
         private const val KEY_SPLITWISE_LAST_SYNC = "splitwise_last_sync"
+        private const val KEY_SPLITWISE_MAX_OFFSET = "splitwise_max_offset"
     }
 }
