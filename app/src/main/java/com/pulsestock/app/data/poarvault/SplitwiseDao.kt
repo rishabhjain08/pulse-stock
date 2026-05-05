@@ -30,6 +30,10 @@ interface SplitwiseDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertExpenses(expenses: List<SplitwiseExpense>)
 
+    // Always update paidShare/ownedShare even for already-cached rows
+    @Query("UPDATE splitwise_expenses SET paidShare = :paidShare, ownedShare = :ownedShare WHERE id = :id")
+    suspend fun updateShares(id: Long, paidShare: Double, ownedShare: Double)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLink(link: SplitwisePlaidLink)
 

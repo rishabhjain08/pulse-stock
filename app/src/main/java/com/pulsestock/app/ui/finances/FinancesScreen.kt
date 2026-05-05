@@ -125,15 +125,15 @@ fun FinancesScreen(
                 items(state.creditAccounts, key = { it.accountId }) { account ->
                     CreditCardSummaryCard(account, currencyFmt)
                 }
-                if (state.creditAccounts.size > 1) {
-                    item {
-                        CreditCardTotalsRow(
-                            accounts = state.creditAccounts,
-                            reimbursable = state.monthlyReimbursable,
-                            includeReimbursements = state.includeReimbursements,
-                            currencyFmt = currencyFmt,
-                        )
-                    }
+                item {
+                    CreditCardTotalsRow(
+                        accounts = state.creditAccounts,
+                        reimbursable = state.monthlyReimbursable,
+                        includeReimbursements = state.includeReimbursements,
+                        showToggle = state.isSplitwiseConnected,
+                        onToggle = vm::toggleIncludeReimbursements,
+                        currencyFmt = currencyFmt,
+                    )
                 }
             }
 
@@ -142,10 +142,8 @@ fun FinancesScreen(
                     SplitwiseMonthCard(
                         selectedMonth = state.selectedMonth,
                         reimbursable = state.monthlyReimbursable,
-                        includeReimbursements = state.includeReimbursements,
                         onPreviousMonth = vm::previousMonth,
                         onNextMonth = vm::nextMonth,
-                        onToggle = vm::toggleIncludeReimbursements,
                         currencyFmt = currencyFmt,
                     )
                 }
@@ -255,6 +253,8 @@ private fun CreditCardTotalsRow(
     accounts: List<AccountEntity>,
     reimbursable: Double,
     includeReimbursements: Boolean,
+    showToggle: Boolean,
+    onToggle: () -> Unit,
     currencyFmt: NumberFormat,
 ) {
     val totalStatement = accounts.sumOf { it.statementBalance ?: 0.0 }
@@ -265,6 +265,7 @@ private fun CreditCardTotalsRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         LabeledAmount(
             label = if (includeReimbursements) "Net Statement" else "Total Statement",
@@ -278,7 +279,24 @@ private fun CreditCardTotalsRow(
             currencyFmt = currencyFmt,
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.weight(1f))
+        if (showToggle) {
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.End,
+            ) {
+                Text(
+                    text = "Offset SW",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Switch(
+                    checked = includeReimbursements,
+                    onCheckedChange = { onToggle() },
+                )
+            }
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
     }
 }
 
@@ -286,10 +304,8 @@ private fun CreditCardTotalsRow(
 private fun SplitwiseMonthCard(
     selectedMonth: YearMonth,
     reimbursable: Double,
-    includeReimbursements: Boolean,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
-    onToggle: () -> Unit,
     currencyFmt: NumberFormat,
 ) {
     val monthFormatter = remember { DateTimeFormatter.ofPattern("MMMM yyyy") }
@@ -344,36 +360,19 @@ private fun SplitwiseMonthCard(
             Spacer(Modifier.height(6.dp))
             HorizontalDivider()
             Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(
-                        text = "Reimbursable",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = currencyFmt.format(reimbursable),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Offset CC totals",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Switch(
-                        checked = includeReimbursements,
-                        onCheckedChange = { onToggle() },
-                    )
-                }
+            Column {
+                Text(
+                    text = "Reimbursable",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = currencyFmt.format(reimbursable),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
             }
         }
     }
