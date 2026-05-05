@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Sync
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.data.poarvault.AccountEntity
 import java.text.NumberFormat
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
@@ -123,8 +127,27 @@ fun FinancesScreen(
                 }
                 if (state.creditAccounts.size > 1) {
                     item {
-                        CreditCardTotalsRow(accounts = state.creditAccounts, currencyFmt = currencyFmt)
+                        CreditCardTotalsRow(
+                            accounts = state.creditAccounts,
+                            reimbursable = state.monthlyReimbursable,
+                            includeReimbursements = state.includeReimbursements,
+                            currencyFmt = currencyFmt,
+                        )
                     }
+                }
+            }
+
+            if (state.isSplitwiseConnected) {
+                item {
+                    SplitwiseMonthCard(
+                        selectedMonth = state.selectedMonth,
+                        reimbursable = state.monthlyReimbursable,
+                        includeReimbursements = state.includeReimbursements,
+                        onPreviousMonth = vm::previousMonth,
+                        onNextMonth = vm::nextMonth,
+                        onToggle = vm::toggleIncludeReimbursements,
+                        currencyFmt = currencyFmt,
+                    )
                 }
             }
 
@@ -228,27 +251,131 @@ internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFo
 }
 
 @Composable
-private fun CreditCardTotalsRow(accounts: List<AccountEntity>, currencyFmt: NumberFormat) {
+private fun CreditCardTotalsRow(
+    accounts: List<AccountEntity>,
+    reimbursable: Double,
+    includeReimbursements: Boolean,
+    currencyFmt: NumberFormat,
+) {
     val totalStatement = accounts.sumOf { it.statementBalance ?: 0.0 }
     val totalCurrent = accounts.sumOf { it.currentBalance ?: 0.0 }
+    val statementDisplay = if (includeReimbursements) totalStatement - reimbursable else totalStatement
+    val currentDisplay = if (includeReimbursements) totalCurrent - reimbursable else totalCurrent
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp, vertical = 2.dp),
     ) {
         LabeledAmount(
-            label = "Total Statement",
-            amount = totalStatement,
+            label = if (includeReimbursements) "Net Statement" else "Total Statement",
+            amount = statementDisplay,
             currencyFmt = currencyFmt,
             modifier = Modifier.weight(1f),
         )
         LabeledAmount(
-            label = "Total Current",
-            amount = totalCurrent,
+            label = if (includeReimbursements) "Net Current" else "Total Current",
+            amount = currentDisplay,
             currencyFmt = currencyFmt,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun SplitwiseMonthCard(
+    selectedMonth: YearMonth,
+    reimbursable: Double,
+    includeReimbursements: Boolean,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onToggle: () -> Unit,
+    currencyFmt: NumberFormat,
+) {
+    val monthFormatter = remember { DateTimeFormatter.ofPattern("MMMM yyyy") }
+    val isCurrentMonth = selectedMonth >= YearMonth.now()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Splitwise",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onPreviousMonth, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Previous month",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        text = selectedMonth.format(monthFormatter),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.width(96.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    IconButton(
+                        onClick = onNextMonth,
+                        enabled = !isCurrentMonth,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Next month",
+                            modifier = Modifier.size(16.dp),
+                            tint = if (isCurrentMonth) MaterialTheme.colorScheme.outlineVariant
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(
+                        text = "Reimbursable",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = currencyFmt.format(reimbursable),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "Offset CC totals",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Switch(
+                        checked = includeReimbursements,
+                        onCheckedChange = { onToggle() },
+                    )
+                }
+            }
+        }
     }
 }
 

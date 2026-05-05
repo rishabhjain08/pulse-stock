@@ -16,7 +16,7 @@ import net.sqlcipher.database.SupportFactory
         SplitwiseExpense::class,
         SplitwisePlaidLink::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class PoarVaultDatabase : RoomDatabase() {
@@ -61,6 +61,14 @@ abstract class PoarVaultDatabase : RoomDatabase() {
             }
         }
 
+        // v3→v4: add paidShare and ownedShare columns to splitwise_expenses
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE splitwise_expenses ADD COLUMN paidShare REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE splitwise_expenses ADD COLUMN ownedShare REAL NOT NULL DEFAULT 0")
+            }
+        }
+
         fun get(context: Context, passphrase: ByteArray): PoarVaultDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room
@@ -70,7 +78,7 @@ abstract class PoarVaultDatabase : RoomDatabase() {
                         "poarvault.db",
                     )
                     .openHelperFactory(SupportFactory(passphrase))
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

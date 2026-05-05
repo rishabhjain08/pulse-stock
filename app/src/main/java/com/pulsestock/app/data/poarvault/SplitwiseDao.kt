@@ -62,6 +62,13 @@ interface SplitwiseDao {
     @Query("UPDATE splitwise_expenses SET isAutoMatched = 0 WHERE id = :expenseId")
     suspend fun clearAutoMatch(expenseId: Long)
 
+    @Query("""
+        SELECT COALESCE(SUM(paidShare - ownedShare), 0.0)
+        FROM splitwise_expenses
+        WHERE substr(date, 1, 7) = :monthPrefix AND isDismissed = 0
+    """)
+    fun watchMonthlyReimbursable(monthPrefix: String): Flow<Double>
+
     @Query("DELETE FROM splitwise_expenses")
     suspend fun nukeAllExpenses()
 

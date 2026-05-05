@@ -16,7 +16,11 @@ import com.pulsestock.app.data.poarvault.TokenStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.time.YearMonth
 
 enum class ReconcileFilter { TO_LINK, LINKED, DISMISSED, ALL }
 
@@ -36,6 +40,9 @@ data class FinancesUiState(
     val isLoadingMore: Boolean = false,
     val linkSheet: LinkSheetState? = null,
     val error: String? = null,
+    val selectedMonth: YearMonth = YearMonth.now(),
+    val monthlyReimbursable: Double = 0.0,
+    val includeReimbursements: Boolean = false,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -76,6 +83,15 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             splitwiseRepo.inboxCount.collect { count ->
                 _uiState.value = _uiState.value.copy(inboxCount = count)
             }
+        }
+        viewModelScope.launch {
+            _uiState
+                .map { it.selectedMonth }
+                .distinctUntilChanged()
+                .flatMapLatest { month -> splitwiseRepo.watchMonthlyReimbursable(month) }
+                .collect { reimbursable ->
+                    _uiState.value = _uiState.value.copy(monthlyReimbursable = reimbursable)
+                }
         }
     }
 
@@ -155,6 +171,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
     fun rejectMatch(expenseId: Long) {
         viewModelScope.launch { splitwiseRepo.rejectMatch(expenseId) }
+    }
+
+    fun previousMonth() {
+        _uiState.value = _uiState.value.copy(
+            selectedMonth = _uiState.value.selectedMonth.minusMonths(1)
+        )
+    }
+
+    fun nextMonth() {
+        val next = _uiState.value.selectedMonth.plusMonths(1)
+        if (!next.isAfter(YearMonth.now())) {
+            _uiState.value = _uiState.value.copy(selectedMonth = next)
+        }
+    }
+
+    fun toggleIncludeReimbursements() {
+        _uiState.value = _uiState.value.copy(
+            includeReimbursements = !_uiState.value.includeReimbursements
+        )
     }
 
     fun dismissError() {

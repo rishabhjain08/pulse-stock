@@ -22,6 +22,8 @@ data class SplitwiseExpense(
     // Inbox state — never overwritten by a cache refresh (IGNORE on conflict)
     val isDismissed: Boolean = false,
     val isAutoMatched: Boolean = false,
+    val paidShare: Double = 0.0,  // how much the current user paid for this expense
+    val ownedShare: Double = 0.0, // how much the current user owes for this expense
 )
 
 // Many-to-many junction: one Splitwise expense ↔ many Plaid transactions
@@ -74,6 +76,7 @@ data class PlaidTransaction(
 @Serializable data class SplitwiseUserShareApi(
     @SerialName("user_id") val userId: Long,
     @SerialName("paid_share") val paidShare: String,
+    @SerialName("owed_share") val ownedShare: String = "0",
 )
 
 @Serializable data class SplitwiseExpenseApi(
@@ -86,14 +89,19 @@ data class PlaidTransaction(
     @SerialName("deleted_at") val deletedAt: String? = null,
     val users: List<SplitwiseUserShareApi> = emptyList(),
 ) {
-    fun toEntity(pageOffset: Int) = SplitwiseExpense(
-        id = id,
-        description = description,
-        date = date.take(10),   // "2024-01-15T00:00:00Z" → "2024-01-15"
-        totalAmount = cost.toDoubleOrNull() ?: 0.0,
-        currencyCode = currencyCode ?: "USD",
-        pageOffset = pageOffset,
-    )
+    fun toEntity(pageOffset: Int, userId: Long = -1L): SplitwiseExpense {
+        val myShare = users.find { it.userId == userId }
+        return SplitwiseExpense(
+            id = id,
+            description = description,
+            date = date.take(10),   // "2024-01-15T00:00:00Z" → "2024-01-15"
+            totalAmount = cost.toDoubleOrNull() ?: 0.0,
+            currencyCode = currencyCode ?: "USD",
+            pageOffset = pageOffset,
+            paidShare = myShare?.paidShare?.toDoubleOrNull() ?: 0.0,
+            ownedShare = myShare?.ownedShare?.toDoubleOrNull() ?: 0.0,
+        )
+    }
 }
 
 @Serializable data class SplitwiseExpensesResponse(

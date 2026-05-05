@@ -3,6 +3,7 @@ package com.pulsestock.app.data.poarvault
 import androidx.room.withTransaction
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
+import java.time.YearMonth
 import kotlin.math.abs
 
 class SplitwiseRepository(
@@ -13,6 +14,9 @@ class SplitwiseRepository(
 ) {
     val allWithLinks: Flow<List<ExpenseWithLinks>> = db.splitwiseDao().watchAllWithLinks()
     val inboxCount: Flow<Int> = db.splitwiseDao().watchInboxCount()
+
+    fun watchMonthlyReimbursable(month: YearMonth): Flow<Double> =
+        db.splitwiseDao().watchMonthlyReimbursable(month.toString())
 
     fun isConnected(): Boolean = tokens.getSplitwiseToken() != null
 
@@ -50,7 +54,7 @@ class SplitwiseRepository(
                 }
             }
             .also { PulseLog.d("SplitwiseRepo", "loadExpenses: after paidShare filter → ${it.size}") }
-            .map { it.toEntity(offset) }
+            .map { it.toEntity(offset, userId) }
         db.splitwiseDao().insertExpenses(entities)
         PulseLog.d("SplitwiseRepo", "loadExpenses: inserted ${entities.size} expenses (IGNORE conflict)")
         if (!loadOlder) runAutoMatch()
