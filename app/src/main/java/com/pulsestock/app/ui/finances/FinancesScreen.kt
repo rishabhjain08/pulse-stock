@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -114,6 +115,7 @@ fun FinancesScreen(
                     SplitwiseMonthCard(
                         selectedMonth = state.selectedMonth,
                         reimbursable = state.monthlyReimbursable,
+                        isLoading = state.isSplitwiseLoading,
                         onPreviousMonth = vm::previousMonth,
                         onNextMonth = vm::nextMonth,
                         currencyFmt = currencyFmt,
@@ -276,6 +278,7 @@ private fun CreditCardTotalsRow(
 private fun SplitwiseMonthCard(
     selectedMonth: YearMonth,
     reimbursable: Double,
+    isLoading: Boolean,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
     currencyFmt: NumberFormat,
@@ -338,13 +341,21 @@ private fun SplitwiseMonthCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
-                    text = currencyFmt.format(reimbursable),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.tertiary,
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp).padding(top = 2.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                } else {
+                    Text(
+                        text = currencyFmt.format(reimbursable),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
             }
         }
     }

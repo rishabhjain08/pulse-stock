@@ -45,6 +45,7 @@ data class FinancesUiState(
     val selectedMonth: YearMonth = YearMonth.now(),
     val monthlyReimbursable: Double = 0.0,
     val includeReimbursements: Boolean = false,
+    val isSplitwiseLoading: Boolean = false,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -69,6 +70,19 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<FinancesUiState> = _uiState.asStateFlow()
 
     init {
+        // Auto-refresh Splitwise on every session so share amounts are always current
+        if (splitwiseRepo.isConnected()) {
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(isSplitwiseLoading = true)
+                try {
+                    splitwiseRepo.loadExpenses(loadOlder = false)
+                } catch (e: Exception) {
+                    PulseLog.w("FinancesVM", "auto-load Splitwise failed: ${e.message}")
+                } finally {
+                    _uiState.value = _uiState.value.copy(isSplitwiseLoading = false)
+                }
+            }
+        }
         viewModelScope.launch {
             db.dao().watchCreditCardAccounts().collect { accounts ->
                 _uiState.value = _uiState.value.copy(
