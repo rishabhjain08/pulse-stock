@@ -43,7 +43,8 @@ data class FinancesUiState(
     val linkSheet: LinkSheetState? = null,
     val error: String? = null,
     val selectedMonth: YearMonth = YearMonth.now(),
-    val monthlyReimbursable: Double = 0.0,
+    val monthlyReimbursable: Double = 0.0,       // for the browsed month (shown in card)
+    val currentMonthReimbursable: Double = 0.0,  // always YearMonth.now() (used for CC offset)
     val includeReimbursements: Boolean = false,
     val isSplitwiseLoading: Boolean = false,
 ) {
@@ -101,17 +102,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 _uiState.value = _uiState.value.copy(inboxCount = count)
             }
         }
+        // Browsed month — updates the card display
         viewModelScope.launch {
             _uiState
                 .map { it.selectedMonth }
                 .distinctUntilChanged()
                 .flatMapLatest { month ->
-                    PulseLog.d("FinancesVM", "reimbursable: querying month=$month (prefix=${month})")
+                    PulseLog.d("FinancesVM", "reimbursable: querying month=$month")
                     splitwiseRepo.watchMonthlyReimbursable(month)
                 }
                 .collect { reimbursable ->
                     PulseLog.d("FinancesVM", "reimbursable: month=${_uiState.value.selectedMonth} → $$reimbursable")
                     _uiState.value = _uiState.value.copy(monthlyReimbursable = reimbursable)
+                }
+        }
+        // Current month — always tracks now() for the CC offset toggle
+        viewModelScope.launch {
+            splitwiseRepo.watchMonthlyReimbursable(YearMonth.now())
+                .collect { reimbursable ->
+                    _uiState.value = _uiState.value.copy(currentMonthReimbursable = reimbursable)
                 }
         }
     }
@@ -195,15 +204,37 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun previousMonth() {
-        _uiState.value = _uiState.value.copy(
-            selectedMonth = _uiState.value.selectedMonth.minusMonths(1)
-        )
+        val newMonth = _uiState.value.selectedMonth.minusMonths(1)
+        _uiState.value = _uiState.value.copy(selectedMonth = newMonth)
+        loadOlderIfNeeded()
     }
 
     fun nextMonth() {
         val next = _uiState.value.selectedMonth.plusMonths(1)
         if (!next.isAfter(YearMonth.now())) {
             _uiState.value = _uiState.value.copy(selectedMonth = next)
+        }
+    }
+
+    // Fetch older pages until the currently-selected month has DB data, or history is exhausted.
+    // Guards against concurrent loads; if user taps prev quickly the spinner stays up and the
+    // in-flight loop re-checks selectedMonth on each iteration, converging on wherever they land.
+    private fun loadOlderIfNeeded() {
+        if (_uiState.value.isSplitwiseLoading) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSplitwiseLoading = true)
+            try {
+                var fetched: Int
+                do {
+                    fetched = splitwiseRepo.loadExpenses(loadOlder = true)
+                    val target = _uiState.value.selectedMonth.toString()
+                    if (db.splitwiseDao().countExpensesForMonth(target) > 0) break
+                } while (fetched > 0)
+            } catch (e: Exception) {
+                PulseLog.w("FinancesVM", "loadOlderIfNeeded failed: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(isSplitwiseLoading = false)
+            }
         }
     }
 

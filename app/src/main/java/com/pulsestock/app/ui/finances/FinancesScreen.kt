@@ -101,7 +101,7 @@ fun FinancesScreen(
                 item {
                     CreditCardTotalsRow(
                         accounts = state.creditAccounts,
-                        reimbursable = state.monthlyReimbursable,
+                        reimbursable = state.currentMonthReimbursable,
                         includeReimbursements = state.includeReimbursements,
                         showToggle = state.isSplitwiseConnected,
                         onToggle = vm::toggleIncludeReimbursements,

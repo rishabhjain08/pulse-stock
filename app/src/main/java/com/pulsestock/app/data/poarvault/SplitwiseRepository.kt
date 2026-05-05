@@ -31,10 +31,11 @@ class SplitwiseRepository(
         tokens.putSplitwiseUserId(user.user.id)
     }
 
-    suspend fun loadExpenses(loadOlder: Boolean = false) {
+    // Returns count of raw expenses fetched from API (0 = end of history)
+    suspend fun loadExpenses(loadOlder: Boolean = false): Int {
         val token = tokens.getSplitwiseToken() ?: run {
             PulseLog.w("SplitwiseRepo", "loadExpenses: no token, skipping")
-            return
+            return 0
         }
         val userId = tokens.getSplitwiseUserId()
         val offset = if (loadOlder) {
@@ -63,6 +64,7 @@ class SplitwiseRepository(
         entities.forEach { db.splitwiseDao().updateShares(it.id, it.paidShare, it.ownedShare) }
         PulseLog.d("SplitwiseRepo", "loadExpenses: inserted/updated ${entities.size} expenses")
         if (!loadOlder) runAutoMatch()
+        return response.expenses.size
     }
 
     suspend fun runAutoMatch() {

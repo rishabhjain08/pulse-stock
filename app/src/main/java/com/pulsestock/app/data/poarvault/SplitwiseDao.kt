@@ -73,6 +73,9 @@ interface SplitwiseDao {
     """)
     fun watchMonthlyReimbursable(monthPrefix: String): Flow<Double>
 
+    @Query("SELECT COUNT(*) FROM splitwise_expenses WHERE substr(date, 1, 7) = :monthPrefix")
+    suspend fun countExpensesForMonth(monthPrefix: String): Int
+
     @Query("DELETE FROM splitwise_expenses")
     suspend fun nukeAllExpenses()
 
