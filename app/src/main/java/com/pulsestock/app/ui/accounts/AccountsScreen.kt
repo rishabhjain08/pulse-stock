@@ -111,8 +111,21 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // ── Banks section ────────────────────────────────────────────────
+            // ── Connected Services — shown first so it's always discoverable ─
+            item { SectionHeader(title = "Connected Services") }
+
             item {
+                SplitwiseCard(
+                    isConnected = state.isSplitwiseConnected,
+                    isConnecting = state.isSplitwiseConnecting,
+                    onConnect = vm::connectSplitwise,
+                    onDisconnect = vm::disconnectSplitwise,
+                )
+            }
+
+            // ── Bank Accounts ────────────────────────────────────────────────
+            item {
+                Spacer(Modifier.height(4.dp))
                 SectionHeader(
                     title = "Bank Accounts",
                     trailing = {
@@ -148,24 +161,8 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
                 )
             }
 
-            // Always-present "add bank" row
             item {
                 AddBankRow(onClick = vm::requestLinkToken)
-            }
-
-            // ── Splitwise section ────────────────────────────────────────────
-            item {
-                Spacer(Modifier.height(4.dp))
-                SectionHeader(title = "Connected Services")
-            }
-
-            item {
-                SplitwiseCard(
-                    isConnected = state.isSplitwiseConnected,
-                    isConnecting = state.isSplitwiseConnecting,
-                    onConnect = vm::connectSplitwise,
-                    onDisconnect = vm::disconnectSplitwise,
-                )
             }
         }
     }

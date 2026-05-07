@@ -250,9 +250,10 @@ private fun CreditCardTotalsRow(
     onToggle: () -> Unit,
     currencyFmt: NumberFormat,
 ) {
-    val totalStatement = accounts.sumOf { it.statementBalance ?: 0.0 }
+    val hasStatements = accounts.any { it.statementBalance != null }
+    val totalStatement = if (hasStatements) accounts.sumOf { it.statementBalance ?: 0.0 } else null
     val totalCurrent = accounts.sumOf { it.currentBalance ?: 0.0 }
-    val statementDisplay = if (includeReimbursements) totalStatement - reimbursable else totalStatement
+    val statementDisplay = if (includeReimbursements) totalStatement?.minus(reimbursable) else totalStatement
     val currentDisplay = if (includeReimbursements) totalCurrent - reimbursable else totalCurrent
     Row(
         modifier = Modifier
@@ -373,7 +374,7 @@ private fun SplitwiseMonthCard(
                         style = MaterialTheme.typography.titleMedium,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.tertiary,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
