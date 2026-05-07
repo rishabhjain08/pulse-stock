@@ -55,6 +55,7 @@ android {
         // Falls back to 1 for local builds.
         versionCode = (System.getenv("VERSION_CODE")?.toIntOrNull()) ?: 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "FINNHUB_API_KEY", "\"$finnhubApiKey\"")
         buildConfigField("String", "POARVAULT_API_URL", "\"$poarvaultApiUrl\"")
@@ -160,6 +161,15 @@ dependencies {
     implementation(libs.sqlcipher)
     implementation(libs.plaid.link)
     debugImplementation(libs.androidx.ui.tooling)
+
+    testImplementation(libs.junit4)
+    androidTestImplementation(libs.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.truth)
 
     // Force profileinstaller 1.4.1 — 1.3.x crashes on Android 16 with NoSuchMethodError
     // on PackageManager.PackageInfoFlags.of(long). Pulled transitively by activity-compose.

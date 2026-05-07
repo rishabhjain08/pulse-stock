@@ -1,6 +1,7 @@
 package com.pulsestock.app.data.poarvault
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -68,6 +69,12 @@ abstract class PoarVaultDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE splitwise_expenses ADD COLUMN ownedShare REAL NOT NULL DEFAULT 0")
             }
         }
+
+        @VisibleForTesting
+        fun getInMemory(context: Context): PoarVaultDatabase =
+            Room.inMemoryDatabaseBuilder(context.applicationContext, PoarVaultDatabase::class.java)
+                .allowMainThreadQueries()
+                .build()
 
         fun get(context: Context, passphrase: ByteArray): PoarVaultDatabase =
             INSTANCE ?: synchronized(this) {
