@@ -67,7 +67,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     private val repo = PoarVaultRepository(api, db, tokens)
     private val splitwiseRepo = SplitwiseRepository(api, splitwiseApi, db, tokens)
 
-    private val _uiState = MutableStateFlow(FinancesUiState())
+    private val _uiState = MutableStateFlow(FinancesUiState(isSplitwiseConnected = splitwiseRepo.isConnected()))
     val uiState: StateFlow<FinancesUiState> = _uiState.asStateFlow()
 
     init {

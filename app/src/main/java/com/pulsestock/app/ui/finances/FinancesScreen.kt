@@ -72,29 +72,22 @@ fun FinancesScreen(
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
-                top = innerPadding.calculateTopPadding() + 8.dp,
-                bottom = innerPadding.calculateBottomPadding() + 8.dp,
+                top = innerPadding.calculateTopPadding() + 12.dp,
+                bottom = innerPadding.calculateBottomPadding() + 16.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
-                Text(
-                    text = "Credit Cards",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
-            }
-
-            if (state.creditAccounts.isEmpty()) {
+            // ── Credit cards — only shown when at least one is connected ─────
+            if (state.creditAccounts.isNotEmpty()) {
                 item {
                     Text(
-                        text = "Connect a bank in the Accounts tab to see credit card summaries.",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "Credit Cards",
+                        style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        modifier = Modifier.padding(bottom = 2.dp),
                     )
                 }
-            } else {
                 items(state.creditAccounts, key = { it.accountId }) { account ->
                     CreditCardSummaryCard(account, currencyFmt)
                 }
@@ -110,6 +103,7 @@ fun FinancesScreen(
                 }
             }
 
+            // ── Splitwise ────────────────────────────────────────────────────
             if (state.isSplitwiseConnected) {
                 item {
                     SplitwiseMonthCard(
@@ -127,6 +121,31 @@ fun FinancesScreen(
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     ReconcileEntryCard(count = state.inboxCount, onClick = onReconcile)
+                }
+            }
+
+            // ── Empty state — nothing connected at all ───────────────────────
+            if (state.creditAccounts.isEmpty() && !state.isSplitwiseConnected) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "No data yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "Connect a bank or Splitwise in the Accounts tab.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    }
                 }
             }
         }
@@ -259,7 +278,7 @@ private fun CreditCardTotalsRow(
                 horizontalAlignment = Alignment.End,
             ) {
                 Text(
-                    text = "Offset SW",
+                    text = "Subtract Splitwise",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -299,7 +318,8 @@ private fun SplitwiseMonthCard(
                 Text(
                     text = "Splitwise",
                     style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onPreviousMonth, modifier = Modifier.size(32.dp)) {
