@@ -68,12 +68,20 @@ android {
 
     signingConfigs {
         create("release") {
-            // In CI: decoded from KEYSTORE_BASE64 secret into keystore/pulsestock.keystore
-            // Locally: place the keystore at that path and set env vars
-            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "../keystore/pulsestock.keystore")
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
-            keyAlias = System.getenv("KEY_ALIAS") ?: "pulsestock"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            // CI: env vars (KEYSTORE_PATH decoded from KEYSTORE_BASE64 secret)
+            // Local: local.properties → keystore/pulsestock.keystore
+            val ksPath = localProps.getProperty("KEYSTORE_PATH")
+            storeFile = when {
+                ksPath != null -> rootProject.file(ksPath)
+                System.getenv("KEYSTORE_PATH") != null -> file(System.getenv("KEYSTORE_PATH")!!)
+                else -> file("../keystore/pulsestock.keystore")
+            }
+            storePassword = localProps.getProperty("KEYSTORE_PASSWORD")
+                ?: System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = localProps.getProperty("KEY_ALIAS")
+                ?: System.getenv("KEY_ALIAS") ?: "pulsestock"
+            keyPassword = localProps.getProperty("KEY_PASSWORD")
+                ?: System.getenv("KEY_PASSWORD") ?: ""
         }
     }
 
