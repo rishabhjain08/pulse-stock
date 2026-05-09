@@ -1049,7 +1049,9 @@ private fun CategoryPickerSheet(
 
         // Custom categories the user has used before — exclude anything already in quick picks
         val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
+        val selectedOverride = transaction?.categoryOverride
         val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
+            .sortedByDescending { it == selectedOverride }
         if (trulyCustomCategories.isNotEmpty()) {
             Text(
                 text = "Your categories",
@@ -1062,7 +1064,7 @@ private fun CategoryPickerSheet(
                 CategoryPickerRow(
                     emoji = meta.emoji,
                     label = meta.displayName,
-                    selected = transaction?.categoryOverride == cat,
+                    selected = selectedOverride == cat,
                     onPick = { onPick(cat) },
                 )
             }
@@ -1071,18 +1073,21 @@ private fun CategoryPickerSheet(
             Spacer(Modifier.height(8.dp))
         }
 
-        // Plaid quick picks
+        // Plaid quick picks — selected item floats to top
+        val sortedQuickPicks = remember(selectedOverride) {
+            CategoryMeta.quickPicks.sortedByDescending { it.first == selectedOverride }
+        }
         Text(
             text = "Categories",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        CategoryMeta.quickPicks.forEach { (code, meta) ->
+        sortedQuickPicks.forEach { (code, meta) ->
             CategoryPickerRow(
                 emoji = meta.emoji,
                 label = meta.displayName,
-                selected = transaction?.categoryOverride == code,
+                selected = selectedOverride == code,
                 onPick = { onPick(code) },
             )
         }
