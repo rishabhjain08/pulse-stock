@@ -33,7 +33,7 @@ enum class ReconcileFilter { TO_LINK, LINKED, DISMISSED, ALL }
 
 enum class SpendingWindow(val label: String) {
     STATEMENT("Statement"),
-    CURRENT_BALANCE("Current balance"),
+    THIS_CYCLE("This cycle"),
     LAST_30_DAYS("Last 30 days"),
     THIS_MONTH("This month"),
 }
@@ -394,7 +394,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 val (start, end) = statementWindow(a, today)
                 AccountDateRange(a.accountId, start, end)
             }
-            SpendingWindow.CURRENT_BALANCE -> accounts.map { a ->
+            SpendingWindow.THIS_CYCLE -> accounts.map { a ->
                 // Transactions since the statement closed — these make up the current balance
                 val statementClose = a.lastStatementDate
                     ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
@@ -450,7 +450,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     "${earliest.format(fmt)} – ${latest.format(fmt)} · ${accounts.size} cards"
                 }
             }
-            SpendingWindow.CURRENT_BALANCE -> {
+            SpendingWindow.THIS_CYCLE -> {
                 // Show "since <close date>" per card, or union start if multiple
                 if (accounts.size == 1) {
                     val start = LocalDate.parse(ranges.first().startDate).format(fmt)
