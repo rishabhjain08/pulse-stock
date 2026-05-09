@@ -1047,19 +1047,21 @@ private fun CategoryPickerSheet(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(8.dp))
 
-        // Custom categories the user has used before
-        if (customCategories.isNotEmpty()) {
+        // Custom categories the user has used before — exclude anything already in quick picks
+        val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
+        val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
+        if (trulyCustomCategories.isNotEmpty()) {
             Text(
                 text = "Your categories",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
-            customCategories.forEach { cat ->
+            trulyCustomCategories.forEach { cat ->
                 val meta = CategoryMeta.get(cat)
                 CategoryPickerRow(
                     emoji = meta.emoji,
-                    label = cat,
+                    label = meta.displayName,
                     selected = transaction?.categoryOverride == cat,
                     onPick = { onPick(cat) },
                 )
