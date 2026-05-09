@@ -189,31 +189,15 @@ fun FinancesScreen(
                             currencyFmt = currencyFmt,
                         )
                     }
-                    // FilterChip row — select which cards contribute to Spending
-                    if (state.creditAccounts.size > 1) {
-                        item {
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 0.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                items(state.creditAccounts, key = { it.accountId }) { account ->
-                                    val selected = state.selectedSpendingAccountIds
-                                        ?.contains(account.accountId) ?: true
-                                    FilterChip(
-                                        selected = selected,
-                                        onClick = { vm.toggleSpendingAccount(account.accountId) },
-                                        label = { Text(account.name.shortCardName()) },
-                                    )
-                                }
-                            }
-                        }
-                    }
                     item {
                         CategoryBreakdownCard(
                             breakdown = state.categoryBreakdown,
                             spendingWindow = state.spendingWindow,
                             dateRangeLabel = state.spendingDateRangeLabel,
                             onWindowChange = vm::setSpendingWindow,
+                            filterAccounts = state.creditAccounts,
+                            selectedSpendingAccountIds = state.selectedSpendingAccountIds,
+                            onToggleAccount = vm::toggleSpendingAccount,
                             onCategoryTap = vm::openCategoryDrillDown,
                             currencyFmt = currencyFmt,
                         )
@@ -415,45 +399,54 @@ private fun CreditCardTotalsRow(
     val totalCurrent = accounts.sumOf { it.currentBalance ?: 0.0 }
     val statementDisplay = if (includeReimbursements) totalStatement?.minus(reimbursable) else totalStatement
     val currentDisplay = if (includeReimbursements) totalCurrent - reimbursable else totalCurrent
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        LabeledAmount(
-            label = if (includeReimbursements) "Net Statement" else "Total Statement",
-            amount = statementDisplay,
-            currencyFmt = currencyFmt,
-            modifier = Modifier.weight(1f),
-        )
-        LabeledAmount(
-            label = if (includeReimbursements) "Net Current" else "Total Current",
-            amount = currentDisplay,
-            currencyFmt = currencyFmt,
-            modifier = Modifier.weight(1f),
-        )
-        if (showToggle) {
-            // Toggle lives in-row with the totals it modifies (proximity principle).
-            Column(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LabeledAmount(
+                label = if (includeReimbursements) "Net Statement" else "Total Statement",
+                amount = statementDisplay,
+                currencyFmt = currencyFmt,
                 modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.End,
-            ) {
-                Text(
-                    text = "Subtract Splitwise",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Switch(
-                    checked = includeReimbursements,
-                    onCheckedChange = { onToggle() },
-                    modifier = Modifier.semantics {
-                        contentDescription = "Subtract Splitwise reimbursements from totals"
-                    },
-                )
+            )
+            LabeledAmount(
+                label = if (includeReimbursements) "Net Current" else "Total Current",
+                amount = currentDisplay,
+                currencyFmt = currencyFmt,
+                modifier = Modifier.weight(1f),
+            )
+            if (showToggle) {
+                // Toggle lives in-row with the totals it modifies (proximity principle).
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    Text(
+                        text = "Subtract Splitwise",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Switch(
+                        checked = includeReimbursements,
+                        onCheckedChange = { onToggle() },
+                        modifier = Modifier.semantics {
+                            contentDescription = "Subtract Splitwise reimbursements from totals"
+                        },
+                    )
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
             }
-        } else {
-            Spacer(Modifier.weight(1f))
         }
     }
 }
@@ -568,6 +561,9 @@ private fun CategoryBreakdownCard(
     spendingWindow: SpendingWindow,
     dateRangeLabel: String?,
     onWindowChange: (SpendingWindow) -> Unit,
+    filterAccounts: List<AccountEntity>,
+    selectedSpendingAccountIds: Set<String>?,
+    onToggleAccount: (String) -> Unit,
     onCategoryTap: (String) -> Unit,
     currencyFmt: NumberFormat,
 ) {
@@ -605,16 +601,33 @@ private fun CategoryBreakdownCard(
                 )
                 SpendingWindowDropdown(selected = spendingWindow, onSelect = onWindowChange)
             }
-            // Date range subtitle (shown for Statement and Last 30 days)
+            // Date range subtitle
             if (dateRangeLabel != null) {
                 Text(
                     text = dateRangeLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(4.dp))
             }
-            Spacer(Modifier.height(8.dp))
+            // Account filter chips — only when 2+ cards connected
+            if (filterAccounts.size > 1) {
+                Spacer(Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 4.dp),
+                ) {
+                    items(filterAccounts, key = { it.accountId }) { account ->
+                        val selected = selectedSpendingAccountIds?.contains(account.accountId) ?: true
+                        FilterChip(
+                            selected = selected,
+                            onClick = { onToggleAccount(account.accountId) },
+                            label = { Text(account.name.shortCardName()) },
+                        )
+                    }
+                }
+            } else {
+                Spacer(Modifier.height(8.dp))
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (breakdown.isEmpty()) {
                 Spacer(Modifier.height(12.dp))
