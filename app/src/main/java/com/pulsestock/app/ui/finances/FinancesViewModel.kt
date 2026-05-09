@@ -173,14 +173,17 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value = _uiState.value.copy(categoryBreakdown = breakdown)
                 }
         }
-        // Auto-load transactions on session start so Spending card is never empty
+        // Auto-load transactions + liabilities on session start
         viewModelScope.launch {
             try {
-                PulseLog.d("FinancesVM", "auto-load: fetching transactions for all institutions")
-                db.dao().allInstitutionIds().forEach { id -> repo.refreshTransactions(id) }
+                PulseLog.d("FinancesVM", "auto-load: fetching transactions + liabilities")
+                db.dao().allInstitutionIds().forEach { id ->
+                    repo.refreshTransactions(id)
+                    repo.refreshLiabilities(id)
+                }
                 PulseLog.d("FinancesVM", "auto-load: done")
             } catch (e: Exception) {
-                PulseLog.w("FinancesVM", "auto-load transactions failed: ${e.message}")
+                PulseLog.w("FinancesVM", "auto-load failed: ${e.message}")
             }
         }
         viewModelScope.launch {
@@ -308,10 +311,13 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleSpendingAccount(accountId: String) {
-        val current = _uiState.value.selectedSpendingAccountIds
-            ?: _uiState.value.creditAccounts.map { it.accountId }.toSet()
-        val updated = if (accountId in current) current - accountId else current + accountId
-        _uiState.value = _uiState.value.copy(selectedSpendingAccountIds = updated)
+        val state = _uiState.value
+        val newSelection = computeSpendingAccountToggle(
+            accountId,
+            state.selectedSpendingAccountIds,
+            state.creditAccounts.map { it.accountId },
+        )
+        _uiState.value = state.copy(selectedSpendingAccountIds = newSelection)
     }
 
     // ── Category drill-down ───────────────────────────────────────────────────
@@ -462,4 +468,20 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+}
+
+/**
+ * Pure function extracted for unit testability.
+ * Returns the new [selectedSpendingAccountIds] after toggling [accountId]:
+ * - If tapping would empty the selection, returns null (= all selected).
+ * - Otherwise adds or removes [accountId] from the current set.
+ */
+internal fun computeSpendingAccountToggle(
+    accountId: String,
+    current: Set<String>?,
+    allAccountIds: List<String>,
+): Set<String>? {
+    val currentSet = current ?: allAccountIds.toSet()
+    val updated = if (accountId in currentSet) currentSet - accountId else currentSet + accountId
+    return if (updated.isEmpty()) null else updated
 }
