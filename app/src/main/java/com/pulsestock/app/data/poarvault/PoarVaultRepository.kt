@@ -1,8 +1,17 @@
 package com.pulsestock.app.data.poarvault
 
+import androidx.sqlite.db.SimpleSQLiteQuery
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
-import java.time.YearMonth
+import kotlinx.coroutines.flow.flowOf
+import java.time.LocalDate
+
+/** One row of the per-account date window used when building category-breakdown queries. */
+data class AccountDateRange(
+    val accountId: String,
+    val startDate: String, // "yyyy-MM-dd"
+    val endDate: String,   // "yyyy-MM-dd"
+)
 
 class PoarVaultRepository(
     private val api: PoarVaultApi,
@@ -21,7 +30,13 @@ class PoarVaultRepository(
     }
 
     suspend fun refreshAll() {
-        db.dao().allInstitutionIds().forEach { refreshInstitution(it) }
+        val ids = db.dao().allInstitutionIds()
+        PulseLog.d("PoarVaultRepo", "refreshAll: ${ids.size} institution(s)")
+        ids.forEach { id ->
+            refreshInstitution(id)
+            refreshTransactions(id)
+            refreshLiabilities(id)
+        }
     }
 
     suspend fun disconnect(institutionId: String) {
@@ -60,41 +75,59 @@ class PoarVaultRepository(
         val creditCount = resp.liabilities.credit?.size ?: 0
         PulseLog.d("PoarVaultRepo", "refreshLiabilities: $creditCount credit liability item(s)")
         resp.liabilities.credit?.forEach { liability ->
-            PulseLog.d("PoarVaultRepo", "refreshLiabilities: accountId=${liability.accountId} statementBal=${liability.lastStatementBalance} minPay=${liability.minimumPaymentAmount} dueDate=${liability.nextPaymentDueDate}")
+            PulseLog.d("PoarVaultRepo", "refreshLiabilities: accountId=${liability.accountId} statementBal=${liability.lastStatementBalance} statementDate=${liability.lastStatementIssueDate} dueDate=${liability.nextPaymentDueDate}")
             db.dao().updateLiability(
                 accountId = liability.accountId,
                 balance = liability.lastStatementBalance,
                 minPay = liability.minimumPaymentAmount,
                 dueDate = liability.nextPaymentDueDate,
+                statementDate = liability.lastStatementIssueDate,
             )
         }
     }
 
-    fun watchMonthlyCategoryBreakdown(month: YearMonth): Flow<List<CategorySpend>> =
-        db.dao().watchMonthlyCategoryBreakdown(month.toString())
+    // ── Category breakdown ────────────────────────────────────────────────────
 
-    suspend fun getTransactionsForCategory(month: YearMonth, category: String): List<PlaidTransaction> =
-        db.dao().getTransactionsForCategory(month.toString(), category)
+    /**
+     * Returns a reactive Flow of category spending. Each [AccountDateRange] specifies which
+     * transactions to include per card — this handles Statement mode where each card has its own
+     * billing-cycle window, as well as uniform-window modes (all entries share the same dates).
+     */
+    fun watchCategoryBreakdown(ranges: List<AccountDateRange>): Flow<List<CategorySpend>> {
+        if (ranges.isEmpty()) return flowOf(emptyList())
+        val query = buildCategoryBreakdownQuery(ranges)
+        return db.dao().watchCategoryBreakdownRaw(query)
+    }
+
+    suspend fun getTransactionsForCategory(
+        ranges: List<AccountDateRange>,
+        category: String,
+    ): List<PlaidTransaction> {
+        if (ranges.isEmpty()) return emptyList()
+        val query = buildTransactionsForCategoryQuery(ranges, category)
+        return db.dao().getTransactionsForCategoryRaw(query)
+    }
 
     suspend fun setCategoryOverride(transactionId: String, override: String?) =
         db.dao().setCategoryOverride(transactionId, override)
 
     fun watchCustomCategories(): Flow<List<String>> = db.dao().watchCustomCategories()
 
+    // ── Transactions ──────────────────────────────────────────────────────────
+
     suspend fun refreshTransactions(institutionId: String) {
         val token = tokens.getAccessToken(institutionId) ?: run {
             PulseLog.w("PoarVaultRepo", "refreshTransactions: no token for $institutionId")
             return
         }
-        val endDate = java.time.LocalDate.now().toString()
-        val startDate = java.time.LocalDate.now().minusDays(89).toString()
+        val endDate = LocalDate.now().toString()
+        val startDate = LocalDate.now().minusDays(89).toString()
         PulseLog.d("PoarVaultRepo", "refreshTransactions: fetching $institutionId $startDate → $endDate")
         val resp = api.getTransactions(token, startDate, endDate)
         PulseLog.d("PoarVaultRepo", "refreshTransactions: total=${resp.totalTransactions} returned=${resp.transactions.size}")
         val nonPending = resp.transactions.filter { !it.pending }
         PulseLog.d("PoarVaultRepo", "refreshTransactions: ${nonPending.size} non-pending transactions")
 
-        // Preserve any user-set category overrides — upsert replaces whole rows
         val existingOverrides = db.dao()
             .getOverridesForIds(nonPending.map { it.transactionId })
             .associate { it.transactionId to it.categoryOverride }
@@ -115,5 +148,47 @@ class PoarVaultRepository(
         }
         db.dao().upsertTransactions(transactions)
         PulseLog.d("PoarVaultRepo", "refreshTransactions: upserted ${transactions.size} transactions")
+    }
+
+    // ── SQL builders ──────────────────────────────────────────────────────────
+
+    private fun buildCategoryBreakdownQuery(ranges: List<AccountDateRange>): SimpleSQLiteQuery {
+        val sb = StringBuilder(
+            """SELECT COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') AS effectiveCategory,
+               SUM(pt.amount) AS totalAmount,
+               COUNT(*) AS txCount
+        FROM plaid_transactions pt
+        INNER JOIN accounts a ON pt.accountId = a.accountId
+        WHERE a.type = 'credit' AND ("""
+        )
+        val args = mutableListOf<Any>()
+        ranges.forEachIndexed { i, r ->
+            if (i > 0) sb.append(" OR ")
+            sb.append("(pt.accountId = ? AND pt.date >= ? AND pt.date <= ?)")
+            args.addAll(listOf(r.accountId, r.startDate, r.endDate))
+        }
+        sb.append(") GROUP BY effectiveCategory ORDER BY totalAmount DESC")
+        return SimpleSQLiteQuery(sb.toString(), args.toTypedArray())
+    }
+
+    private fun buildTransactionsForCategoryQuery(
+        ranges: List<AccountDateRange>,
+        category: String,
+    ): SimpleSQLiteQuery {
+        val sb = StringBuilder(
+            """SELECT pt.* FROM plaid_transactions pt
+        INNER JOIN accounts a ON pt.accountId = a.accountId
+        WHERE a.type = 'credit'
+          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') = ?
+          AND ("""
+        )
+        val args = mutableListOf<Any>(category)
+        ranges.forEachIndexed { i, r ->
+            if (i > 0) sb.append(" OR ")
+            sb.append("(pt.accountId = ? AND pt.date >= ? AND pt.date <= ?)")
+            args.addAll(listOf(r.accountId, r.startDate, r.endDate))
+        }
+        sb.append(") ORDER BY pt.date DESC")
+        return SimpleSQLiteQuery(sb.toString(), args.toTypedArray())
     }
 }

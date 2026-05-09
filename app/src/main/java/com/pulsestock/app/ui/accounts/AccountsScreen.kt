@@ -3,7 +3,11 @@ package com.pulsestock.app.ui.accounts
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.browser.customtabs.CustomTabsIntent
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +26,7 @@ import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -39,10 +43,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,6 +72,10 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val snackbarState = remember { SnackbarHostState() }
     val currencyFmt = remember { NumberFormat.getCurrencyInstance(Locale.US) }
+
+    // Entrance animation trigger
+    var contentVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { contentVisible = true }
 
     val launcher = rememberLauncherForActivityResult(FastOpenPlaidLink()) { result ->
         when (result) {
@@ -101,80 +113,103 @@ fun AccountsScreen(modifier: Modifier = Modifier) {
         snackbarHost = { SnackbarHost(snackbarState) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = innerPadding.calculateTopPadding() + 12.dp,
-                bottom = innerPadding.calculateBottomPadding() + 16.dp,
+        // Entrance: fade in + slide up — 10% offset for subtlety, spring for natural feel.
+        AnimatedVisibility(
+            visible = contentVisible,
+            enter = fadeIn() + slideInVertically(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+                initialOffsetY = { it / 10 },
             ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // ── Connected Services — shown first so it's always discoverable ─
-            item { SectionHeader(title = "Connected Services") }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = innerPadding.calculateTopPadding() + 12.dp,
+                    bottom = innerPadding.calculateBottomPadding() + 16.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // ── Connected Services — shown first so it's always discoverable ─
+                item { AccountsSectionHeader(title = "Connected Services") }
 
-            item {
-                SplitwiseCard(
-                    isConnected = state.isSplitwiseConnected,
-                    isConnecting = state.isSplitwiseConnecting,
-                    onConnect = vm::connectSplitwise,
-                    onDisconnect = vm::disconnectSplitwise,
-                )
-            }
+                item {
+                    SplitwiseCard(
+                        isConnected = state.isSplitwiseConnected,
+                        isConnecting = state.isSplitwiseConnecting,
+                        onConnect = vm::connectSplitwise,
+                        onDisconnect = vm::disconnectSplitwise,
+                    )
+                }
 
-            // ── Bank Accounts ────────────────────────────────────────────────
-            item {
-                Spacer(Modifier.height(4.dp))
-                SectionHeader(
-                    title = "Bank Accounts",
-                    trailing = {
-                        if (state.institutions.isNotEmpty()) {
-                            if (state.isSyncing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            } else {
-                                IconButton(onClick = vm::sync, modifier = Modifier.size(36.dp)) {
-                                    Icon(
-                                        Icons.Default.Sync,
-                                        contentDescription = "Sync all",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp),
+                // ── Bank Accounts ────────────────────────────────────────────────
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    AccountsSectionHeader(
+                        title = "Bank Accounts",
+                        trailing = {
+                            if (state.institutions.isNotEmpty()) {
+                                if (state.isSyncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
                                     )
+                                } else {
+                                    // M3 IconButton provides a 48dp×48dp touch target by default.
+                                    IconButton(
+                                        onClick = vm::sync,
+                                        modifier = Modifier.semantics {
+                                            contentDescription = "Sync all accounts"
+                                        },
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Sync,
+                                            // contentDescription carried by parent semantics block.
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    }
-                )
-            }
+                        },
+                    )
+                }
 
-            items(state.institutions, key = { it.institution.institutionId }) { iwa ->
-                val id = iwa.institution.institutionId
-                InstitutionCard(
-                    iwa = iwa,
-                    currencyFmt = currencyFmt,
-                    isSyncing = id in state.syncingIds,
-                    onSync = { vm.syncInstitution(id) },
-                    onDisconnect = { vm.disconnect(id) },
-                )
-            }
+                items(state.institutions, key = { it.institution.institutionId }) { iwa ->
+                    val id = iwa.institution.institutionId
+                    InstitutionCard(
+                        iwa = iwa,
+                        currencyFmt = currencyFmt,
+                        isSyncing = id in state.syncingIds,
+                        onSync = { vm.syncInstitution(id) },
+                        onDisconnect = { vm.disconnect(id) },
+                    )
+                }
 
-            item {
-                AddBankRow(onClick = vm::requestLinkToken)
+                item {
+                    AddBankRow(onClick = vm::requestLinkToken)
+                }
             }
         }
     }
 }
 
+// ── Section header ─────────────────────────────────────────────────────────────
+
 @Composable
-private fun SectionHeader(
+private fun AccountsSectionHeader(
     title: String,
     trailing: @Composable () -> Unit = {},
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -188,11 +223,20 @@ private fun SectionHeader(
     }
 }
 
+// ── Add bank CTA row ──────────────────────────────────────────────────────────
+
 @Composable
 private fun AddBankRow(onClick: () -> Unit) {
+    // Card(onClick=...) provides the correct M3 state-layer ripple on interactive tap.
+    // secondaryContainer draws attention to the CTA without being as assertive as primaryContainer.
+    // shapes.medium = 12dp — this is a list-level action row, not a section container.
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
@@ -203,19 +247,23 @@ private fun AddBankRow(onClick: () -> Unit) {
         ) {
             Icon(
                 imageVector = Icons.Default.Add,
+                // Decorative — action described by adjacent text label.
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.size(20.dp),
             )
             Spacer(Modifier.width(12.dp))
             Text(
                 text = "Connect bank account",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
     }
 }
+
+// ── Splitwise service card ────────────────────────────────────────────────────
 
 @Composable
 private fun SplitwiseCard(
@@ -224,10 +272,15 @@ private fun SplitwiseCard(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
+    // shapes.large = 16dp — SplitwiseCard is a standalone section-level service card.
+    // Tonal elevation 0dp; containerColor provides all needed differentiation from background.
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
             modifier = Modifier
@@ -238,9 +291,11 @@ private fun SplitwiseCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Splitwise",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+                Spacer(Modifier.height(4.dp))
                 Text(
                     text = if (isConnected) "Connected" else "Track shared expense reimbursements",
                     style = MaterialTheme.typography.bodySmall,
@@ -270,6 +325,8 @@ private fun SplitwiseCard(
     }
 }
 
+// ── Institution card ──────────────────────────────────────────────────────────
+
 @Composable
 private fun InstitutionCard(
     iwa: InstitutionWithAccounts,
@@ -280,10 +337,15 @@ private fun InstitutionCard(
 ) {
     val lastSyncedMs = iwa.accounts.maxOfOrNull { it.lastRefreshed } ?: 0L
 
+    // shapes.large = 16dp — InstitutionCard is a section container holding multiple account rows.
+    // Tonal elevation 0dp; surfaceContainerLow provides the needed lift over the page background.
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -292,23 +354,31 @@ private fun InstitutionCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.AccountBalance,
+                    // Decorative — institution name text is the accessible label.
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
                 )
                 Text(
                     text = iwa.institution.name,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 8.dp).weight(1f),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .weight(1f),
                 )
                 if (isSyncing) {
+                    // Spinner replaces both action buttons during sync to prevent double-taps.
                     CircularProgressIndicator(
-                        modifier = Modifier.padding(horizontal = 10.dp).size(18.dp),
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp)
+                            .size(18.dp),
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    IconButton(onClick = onSync, modifier = Modifier.size(36.dp)) {
+                    // M3 IconButton = 48dp×48dp touch target by default — no explicit size needed.
+                    IconButton(onClick = onSync) {
                         Icon(
                             imageVector = Icons.Default.Sync,
                             contentDescription = "Sync ${iwa.institution.name}",
@@ -317,7 +387,7 @@ private fun InstitutionCard(
                         )
                     }
                 }
-                IconButton(onClick = onDisconnect, modifier = Modifier.size(36.dp)) {
+                IconButton(onClick = onDisconnect) {
                     Icon(
                         imageVector = Icons.Default.LinkOff,
                         contentDescription = "Disconnect ${iwa.institution.name}",
@@ -335,11 +405,17 @@ private fun InstitutionCard(
             )
 
             if (iwa.accounts.isNotEmpty()) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
                 iwa.accounts.forEachIndexed { index, account ->
                     AccountRow(account, currencyFmt)
                     if (index < iwa.accounts.lastIndex) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        )
                     }
                 }
             }
@@ -358,14 +434,22 @@ private fun formatSyncTime(timestamp: Long): String {
     }
 }
 
+// ── Account balance row ────────────────────────────────────────────────────────
+
 @Composable
 private fun AccountRow(account: AccountEntity, currencyFmt: NumberFormat) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = account.name, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = account.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
             Text(
                 text = buildString {
                     append(account.type.replaceFirstChar { it.uppercase() })
@@ -382,6 +466,7 @@ private fun AccountRow(account: AccountEntity, currencyFmt: NumberFormat) {
                     text = currencyFmt.format(current),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             val available = account.availableBalance

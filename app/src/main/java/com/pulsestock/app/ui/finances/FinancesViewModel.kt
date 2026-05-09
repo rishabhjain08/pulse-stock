@@ -3,6 +3,7 @@ package com.pulsestock.app.ui.finances
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pulsestock.app.data.poarvault.AccountDateRange
 import com.pulsestock.app.data.poarvault.AccountEntity
 import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.data.poarvault.ExpenseWithLinks
@@ -21,11 +22,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 
 enum class ReconcileFilter { TO_LINK, LINKED, DISMISSED, ALL }
+
+enum class SpendingWindow(val label: String) {
+    STATEMENT("Statement"),
+    LAST_30_DAYS("Last 30 days"),
+    THIS_MONTH("This month"),
+    ALL_SYNCED("All synced"),
+}
 
 data class LinkSheetState(
     val expense: SplitwiseExpense,
@@ -44,11 +55,16 @@ data class FinancesUiState(
     val linkSheet: LinkSheetState? = null,
     val error: String? = null,
     val selectedMonth: YearMonth = YearMonth.now(),
-    val monthlyReimbursable: Double = 0.0,       // for the browsed month (shown in card)
-    val currentMonthReimbursable: Double = 0.0,  // always YearMonth.now() (used for CC offset)
+    val monthlyReimbursable: Double = 0.0,
+    val currentMonthReimbursable: Double = 0.0,
     val includeReimbursements: Boolean = false,
     val isSplitwiseLoading: Boolean = false,
-    // Category breakdown — always current month (90-day transaction window)
+    // Spending card state
+    val spendingWindow: SpendingWindow = SpendingWindow.LAST_30_DAYS,
+    // null = all credit accounts selected; non-null = explicit subset
+    val selectedSpendingAccountIds: Set<String>? = null,
+    // Date range label shown as subtitle (e.g. "Apr 12 – May 9")
+    val spendingDateRangeLabel: String? = null,
     val categoryBreakdown: List<CategorySpend> = emptyList(),
     val categoryDrillDown: String? = null,
     val drillDownTransactions: List<PlaidTransaction> = emptyList(),
@@ -61,6 +77,11 @@ data class FinancesUiState(
         ReconcileFilter.DISMISSED -> allWithLinks.filter { it.isDismissed }
         ReconcileFilter.ALL       -> allWithLinks
     }
+
+    /** Accounts currently contributing to the Spending card. */
+    val effectiveSpendingAccounts: List<AccountEntity> get() =
+        if (selectedSpendingAccountIds == null) creditAccounts
+        else creditAccounts.filter { it.accountId in selectedSpendingAccountIds }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -93,9 +114,14 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             db.dao().watchCreditCardAccounts().collect { accounts ->
-                _uiState.value = _uiState.value.copy(
+                val prev = _uiState.value
+                // Initialize selection to all accounts on first load
+                val selectedIds = prev.selectedSpendingAccountIds
+                    ?: accounts.map { it.accountId }.toSet()
+                _uiState.value = prev.copy(
                     creditAccounts = accounts,
                     isSplitwiseConnected = splitwiseRepo.isConnected(),
+                    selectedSpendingAccountIds = selectedIds,
                 )
             }
         }
@@ -115,11 +141,9 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 .map { it.selectedMonth }
                 .distinctUntilChanged()
                 .flatMapLatest { month ->
-                    PulseLog.d("FinancesVM", "reimbursable: querying month=$month")
                     splitwiseRepo.watchMonthlyReimbursable(month)
                 }
                 .collect { reimbursable ->
-                    PulseLog.d("FinancesVM", "reimbursable: month=${_uiState.value.selectedMonth} → $$reimbursable")
                     _uiState.value = _uiState.value.copy(monthlyReimbursable = reimbursable)
                 }
         }
@@ -130,12 +154,34 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value = _uiState.value.copy(currentMonthReimbursable = reimbursable)
                 }
         }
-        // Category breakdown — current month, re-queries whenever overrides change
+        // Spending category breakdown — re-queries whenever window, selection, or accounts change
         viewModelScope.launch {
-            repo.watchMonthlyCategoryBreakdown(YearMonth.now())
+            _uiState
+                .map { Triple(it.spendingWindow, it.selectedSpendingAccountIds, it.creditAccounts) }
+                .distinctUntilChanged()
+                .flatMapLatest { (window, selectedIds, accounts) ->
+                    val effectiveAccounts = if (selectedIds == null) accounts
+                        else accounts.filter { it.accountId in selectedIds }
+                    if (effectiveAccounts.isEmpty()) return@flatMapLatest flowOf(emptyList())
+                    val ranges = buildAccountDateRanges(window, effectiveAccounts)
+                    val label = buildDateRangeLabel(window, ranges, effectiveAccounts)
+                    _uiState.value = _uiState.value.copy(spendingDateRangeLabel = label)
+                    repo.watchCategoryBreakdown(ranges)
+                }
                 .collect { breakdown ->
+                    PulseLog.d("FinancesVM", "categoryBreakdown: ${breakdown.size} categories")
                     _uiState.value = _uiState.value.copy(categoryBreakdown = breakdown)
                 }
+        }
+        // Auto-load transactions on session start so Spending card is never empty
+        viewModelScope.launch {
+            try {
+                PulseLog.d("FinancesVM", "auto-load: fetching transactions for all institutions")
+                db.dao().allInstitutionIds().forEach { id -> repo.refreshTransactions(id) }
+                PulseLog.d("FinancesVM", "auto-load: done")
+            } catch (e: Exception) {
+                PulseLog.w("FinancesVM", "auto-load transactions failed: ${e.message}")
+            }
         }
         viewModelScope.launch {
             repo.watchCustomCategories().collect { categories ->
@@ -235,9 +281,6 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // Fetch older pages until the currently-selected month has DB data, or history is exhausted.
-    // Guards against concurrent loads; if user taps prev quickly the spinner stays up and the
-    // in-flight loop re-checks selectedMonth on each iteration, converging on wherever they land.
     private fun loadOlderIfNeeded() {
         if (_uiState.value.isSplitwiseLoading) return
         viewModelScope.launch {
@@ -247,8 +290,6 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     val result = splitwiseRepo.loadOlderExpenses()
                     val target = _uiState.value.selectedMonth
                     if (db.splitwiseDao().countExpensesForMonth(target.toString()) > 0) break
-                    // Stop if we've already scanned raw expenses older than the target month —
-                    // the target month has no paidShare > 0 expenses
                     val oldestRaw = result.oldestRawDate ?: break
                     if (YearMonth.parse(oldestRaw.take(7)).isBefore(target)) break
                 } while (result.rawCount > 0)
@@ -260,9 +301,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // ── Spending window & account selection ───────────────────────────────────
+
+    fun setSpendingWindow(window: SpendingWindow) {
+        _uiState.value = _uiState.value.copy(spendingWindow = window)
+    }
+
+    fun toggleSpendingAccount(accountId: String) {
+        val current = _uiState.value.selectedSpendingAccountIds
+            ?: _uiState.value.creditAccounts.map { it.accountId }.toSet()
+        val updated = if (accountId in current) current - accountId else current + accountId
+        _uiState.value = _uiState.value.copy(selectedSpendingAccountIds = updated)
+    }
+
+    // ── Category drill-down ───────────────────────────────────────────────────
+
     fun openCategoryDrillDown(category: String) {
         viewModelScope.launch {
-            val txns = repo.getTransactionsForCategory(YearMonth.now(), category)
+            val ranges = currentSpendingRanges()
+            val txns = repo.getTransactionsForCategory(ranges, category)
             _uiState.value = _uiState.value.copy(
                 categoryDrillDown = category,
                 drillDownTransactions = txns,
@@ -289,10 +346,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     fun applyOverride(transactionId: String, category: String?) {
         viewModelScope.launch {
             repo.setCategoryOverride(transactionId, category)
-            // Refresh the drill-down list — the overridden tx may have moved to another bucket
             val drillCategory = _uiState.value.categoryDrillDown
             if (drillCategory != null) {
-                val txns = repo.getTransactionsForCategory(YearMonth.now(), drillCategory)
+                val ranges = currentSpendingRanges()
+                val txns = repo.getTransactionsForCategory(ranges, drillCategory)
                 _uiState.value = _uiState.value.copy(
                     drillDownTransactions = txns,
                     overridingTransaction = null,
@@ -311,5 +368,82 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
     fun dismissError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun currentSpendingRanges(): List<AccountDateRange> {
+        val state = _uiState.value
+        val accounts = state.effectiveSpendingAccounts
+        return buildAccountDateRanges(state.spendingWindow, accounts)
+    }
+
+    private fun buildAccountDateRanges(
+        window: SpendingWindow,
+        accounts: List<AccountEntity>,
+    ): List<AccountDateRange> {
+        val today = LocalDate.now()
+        return when (window) {
+            SpendingWindow.LAST_30_DAYS -> accounts.map { a ->
+                AccountDateRange(a.accountId, today.minusDays(29).toString(), today.toString())
+            }
+            SpendingWindow.THIS_MONTH -> accounts.map { a ->
+                AccountDateRange(a.accountId, today.withDayOfMonth(1).toString(), today.toString())
+            }
+            SpendingWindow.ALL_SYNCED -> accounts.map { a ->
+                AccountDateRange(a.accountId, today.minusDays(89).toString(), today.toString())
+            }
+            SpendingWindow.STATEMENT -> accounts.map { a ->
+                val (start, end) = statementWindow(a, today)
+                AccountDateRange(a.accountId, start, end)
+            }
+        }
+    }
+
+    /**
+     * Returns the statement window for a credit card.
+     * Prefers Plaid's actual last_statement_issue_date as the close date.
+     * Falls back to dueDate-21d heuristic, then to last 30 days.
+     * Start is always close-30d (standard 30-day billing cycle).
+     */
+    private fun statementWindow(account: AccountEntity, today: LocalDate): Pair<String, String> {
+        val close = account.lastStatementDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: account.nextDueDate
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?.minusDays(21)
+        return if (close != null) {
+            close.minusDays(30).toString() to close.toString()
+        } else {
+            today.minusDays(29).toString() to today.toString()
+        }
+    }
+
+    private fun buildDateRangeLabel(
+        window: SpendingWindow,
+        ranges: List<AccountDateRange>,
+        accounts: List<AccountEntity>,
+    ): String? {
+        if (ranges.isEmpty()) return null
+        val fmt = DateTimeFormatter.ofPattern("MMM d")
+        return when (window) {
+            SpendingWindow.THIS_MONTH, SpendingWindow.ALL_SYNCED -> null
+            SpendingWindow.LAST_30_DAYS -> {
+                val start = LocalDate.parse(ranges.first().startDate).format(fmt)
+                val end = LocalDate.parse(ranges.first().endDate).format(fmt)
+                "$start – $end"
+            }
+            SpendingWindow.STATEMENT -> {
+                // Show per-card if single card, union span + count if multiple
+                if (accounts.size == 1) {
+                    val r = ranges.first()
+                    "${LocalDate.parse(r.startDate).format(fmt)} – ${LocalDate.parse(r.endDate).format(fmt)}"
+                } else {
+                    val earliest = ranges.minOf { LocalDate.parse(it.startDate) }
+                    val latest = ranges.maxOf { LocalDate.parse(it.endDate) }
+                    "${earliest.format(fmt)} – ${latest.format(fmt)} · ${accounts.size} cards"
+                }
+            }
+        }
     }
 }

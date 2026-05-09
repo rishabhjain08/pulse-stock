@@ -40,6 +40,8 @@ data class AccountEntity(
     val statementBalance: Double? = null,
     val minimumPayment: Double? = null,
     val nextDueDate: String? = null,
+    // Statement close date from Plaid /liabilities last_statement_issue_date
+    val lastStatementDate: String? = null,
 )
 
 data class InstitutionWithAccounts(
@@ -76,6 +78,7 @@ data class InstitutionWithAccounts(
 @Serializable data class PlaidCreditLiability(
     @SerialName("account_id") val accountId: String,
     @SerialName("last_statement_balance") val lastStatementBalance: Double? = null,
+    @SerialName("last_statement_issue_date") val lastStatementIssueDate: String? = null,
     @SerialName("minimum_payment_amount") val minimumPaymentAmount: Double? = null,
     @SerialName("next_payment_due_date") val nextPaymentDueDate: String? = null,
 )

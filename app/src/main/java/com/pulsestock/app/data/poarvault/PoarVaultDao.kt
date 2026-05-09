@@ -4,7 +4,9 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.RawQuery
 import androidx.room.Transaction
+import androidx.sqlite.db.SupportSQLiteQuery
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -31,10 +33,17 @@ interface PoarVaultDao {
 
     @Query("""
         UPDATE accounts
-        SET statementBalance = :balance, minimumPayment = :minPay, nextDueDate = :dueDate
+        SET statementBalance = :balance, minimumPayment = :minPay, nextDueDate = :dueDate,
+            lastStatementDate = :statementDate
         WHERE accountId = :accountId
     """)
-    suspend fun updateLiability(accountId: String, balance: Double?, minPay: Double?, dueDate: String?)
+    suspend fun updateLiability(
+        accountId: String,
+        balance: Double?,
+        minPay: Double?,
+        dueDate: String?,
+        statementDate: String?,
+    )
 
     // ── Transactions ──────────────────────────────────────────────────────────
 
@@ -53,30 +62,16 @@ interface PoarVaultDao {
     """)
     suspend fun getRecentCreditTransactions(): List<PlaidTransaction>
 
-    // ── Category breakdown ────────────────────────────────────────────────────
+    // ── Category breakdown — dynamic per-account date windows ────────────────
+    // observedEntities tells Room which tables to watch for automatic re-emission
 
-    @Query("""
-        SELECT COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') AS effectiveCategory,
-               SUM(pt.amount) AS totalAmount,
-               COUNT(*) AS txCount
-        FROM plaid_transactions pt
-        INNER JOIN accounts a ON pt.accountId = a.accountId
-        WHERE a.type = 'credit'
-          AND substr(pt.date, 1, 7) = :monthPrefix
-        GROUP BY COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER')
-        ORDER BY SUM(pt.amount) DESC
-    """)
-    fun watchMonthlyCategoryBreakdown(monthPrefix: String): Flow<List<CategorySpend>>
+    @RawQuery(observedEntities = [PlaidTransaction::class, AccountEntity::class])
+    fun watchCategoryBreakdownRaw(query: SupportSQLiteQuery): Flow<List<CategorySpend>>
 
-    @Query("""
-        SELECT pt.* FROM plaid_transactions pt
-        INNER JOIN accounts a ON pt.accountId = a.accountId
-        WHERE a.type = 'credit'
-          AND substr(pt.date, 1, 7) = :monthPrefix
-          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') = :category
-        ORDER BY pt.date DESC
-    """)
-    suspend fun getTransactionsForCategory(monthPrefix: String, category: String): List<PlaidTransaction>
+    @RawQuery(observedEntities = [PlaidTransaction::class, AccountEntity::class])
+    suspend fun getTransactionsForCategoryRaw(query: SupportSQLiteQuery): List<PlaidTransaction>
+
+    // ── Category overrides ────────────────────────────────────────────────────
 
     @Query("UPDATE plaid_transactions SET categoryOverride = :override WHERE transactionId = :id")
     suspend fun setCategoryOverride(id: String, override: String?)
