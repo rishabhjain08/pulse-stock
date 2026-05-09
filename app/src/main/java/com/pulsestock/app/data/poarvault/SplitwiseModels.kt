@@ -64,7 +64,25 @@ data class PlaidTransaction(
     val amount: Double,         // positive = debit (Plaid convention)
     val date: String,           // "2024-01-15"
     val category: String? = null,
+    val pfcPrimary: String? = null,    // e.g. "FOOD_AND_DRINK"
+    val pfcDetailed: String? = null,   // e.g. "FOOD_AND_DRINK_RESTAURANTS"
+    val categoryOverride: String? = null,
     val cachedAt: Long = System.currentTimeMillis(),
+)
+
+// Effective category priority: categoryOverride > pfcDetailed > pfcPrimary > category
+val PlaidTransaction.effectiveCategory: String
+    get() = categoryOverride ?: pfcDetailed ?: pfcPrimary ?: category ?: "OTHER"
+
+data class CategorySpend(
+    val effectiveCategory: String,
+    val totalAmount: Double,
+    val txCount: Int,
+)
+
+data class TransactionOverride(
+    val transactionId: String,
+    val categoryOverride: String?,
 )
 
 // ── Splitwise API response models (direct app → Splitwise calls) ──────────────

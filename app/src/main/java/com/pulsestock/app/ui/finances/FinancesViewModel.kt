@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsestock.app.data.poarvault.AccountEntity
+import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.data.poarvault.ExpenseWithLinks
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.PoarVaultApi
@@ -47,6 +48,12 @@ data class FinancesUiState(
     val currentMonthReimbursable: Double = 0.0,  // always YearMonth.now() (used for CC offset)
     val includeReimbursements: Boolean = false,
     val isSplitwiseLoading: Boolean = false,
+    // Category breakdown — always current month (90-day transaction window)
+    val categoryBreakdown: List<CategorySpend> = emptyList(),
+    val categoryDrillDown: String? = null,
+    val drillDownTransactions: List<PlaidTransaction> = emptyList(),
+    val overridingTransaction: PlaidTransaction? = null,
+    val customCategories: List<String> = emptyList(),
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -122,6 +129,18 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 .collect { reimbursable ->
                     _uiState.value = _uiState.value.copy(currentMonthReimbursable = reimbursable)
                 }
+        }
+        // Category breakdown — current month, re-queries whenever overrides change
+        viewModelScope.launch {
+            repo.watchMonthlyCategoryBreakdown(YearMonth.now())
+                .collect { breakdown ->
+                    _uiState.value = _uiState.value.copy(categoryBreakdown = breakdown)
+                }
+        }
+        viewModelScope.launch {
+            repo.watchCustomCategories().collect { categories ->
+                _uiState.value = _uiState.value.copy(customCategories = categories)
+            }
         }
     }
 
@@ -237,6 +256,49 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 PulseLog.w("FinancesVM", "loadOlderIfNeeded failed: ${e.message}")
             } finally {
                 _uiState.value = _uiState.value.copy(isSplitwiseLoading = false)
+            }
+        }
+    }
+
+    fun openCategoryDrillDown(category: String) {
+        viewModelScope.launch {
+            val txns = repo.getTransactionsForCategory(YearMonth.now(), category)
+            _uiState.value = _uiState.value.copy(
+                categoryDrillDown = category,
+                drillDownTransactions = txns,
+            )
+        }
+    }
+
+    fun closeCategoryDrillDown() {
+        _uiState.value = _uiState.value.copy(
+            categoryDrillDown = null,
+            drillDownTransactions = emptyList(),
+            overridingTransaction = null,
+        )
+    }
+
+    fun startOverride(tx: PlaidTransaction) {
+        _uiState.value = _uiState.value.copy(overridingTransaction = tx)
+    }
+
+    fun cancelOverride() {
+        _uiState.value = _uiState.value.copy(overridingTransaction = null)
+    }
+
+    fun applyOverride(transactionId: String, category: String?) {
+        viewModelScope.launch {
+            repo.setCategoryOverride(transactionId, category)
+            // Refresh the drill-down list — the overridden tx may have moved to another bucket
+            val drillCategory = _uiState.value.categoryDrillDown
+            if (drillCategory != null) {
+                val txns = repo.getTransactionsForCategory(YearMonth.now(), drillCategory)
+                _uiState.value = _uiState.value.copy(
+                    drillDownTransactions = txns,
+                    overridingTransaction = null,
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(overridingTransaction = null)
             }
         }
     }

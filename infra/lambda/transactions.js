@@ -15,7 +15,7 @@ exports.handler = async (event) => {
       access_token,
       start_date,
       end_date,
-      options: { count: 500 },
+      options: { count: 500, include_personal_finance_category: true },
     });
     return ok(resp.data);
   } catch (e) {

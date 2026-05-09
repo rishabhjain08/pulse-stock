@@ -17,7 +17,7 @@ import net.sqlcipher.database.SupportFactory
         SplitwiseExpense::class,
         SplitwisePlaidLink::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class PoarVaultDatabase : RoomDatabase() {
@@ -70,6 +70,15 @@ abstract class PoarVaultDatabase : RoomDatabase() {
             }
         }
 
+        // v4→v5: add Plaid personal_finance_category columns + user override
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE plaid_transactions ADD COLUMN pfcPrimary TEXT")
+                db.execSQL("ALTER TABLE plaid_transactions ADD COLUMN pfcDetailed TEXT")
+                db.execSQL("ALTER TABLE plaid_transactions ADD COLUMN categoryOverride TEXT")
+            }
+        }
+
         @VisibleForTesting
         fun getInMemory(context: Context): PoarVaultDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, PoarVaultDatabase::class.java)
@@ -85,7 +94,7 @@ abstract class PoarVaultDatabase : RoomDatabase() {
                         "poarvault.db",
                     )
                     .openHelperFactory(SupportFactory(passphrase))
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }

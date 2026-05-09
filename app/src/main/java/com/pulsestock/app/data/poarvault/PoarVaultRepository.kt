@@ -2,6 +2,7 @@ package com.pulsestock.app.data.poarvault
 
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
+import java.time.YearMonth
 
 class PoarVaultRepository(
     private val api: PoarVaultApi,
@@ -69,6 +70,17 @@ class PoarVaultRepository(
         }
     }
 
+    fun watchMonthlyCategoryBreakdown(month: YearMonth): Flow<List<CategorySpend>> =
+        db.dao().watchMonthlyCategoryBreakdown(month.toString())
+
+    suspend fun getTransactionsForCategory(month: YearMonth, category: String): List<PlaidTransaction> =
+        db.dao().getTransactionsForCategory(month.toString(), category)
+
+    suspend fun setCategoryOverride(transactionId: String, override: String?) =
+        db.dao().setCategoryOverride(transactionId, override)
+
+    fun watchCustomCategories(): Flow<List<String>> = db.dao().watchCustomCategories()
+
     suspend fun refreshTransactions(institutionId: String) {
         val token = tokens.getAccessToken(institutionId) ?: run {
             PulseLog.w("PoarVaultRepo", "refreshTransactions: no token for $institutionId")
@@ -79,20 +91,28 @@ class PoarVaultRepository(
         PulseLog.d("PoarVaultRepo", "refreshTransactions: fetching $institutionId $startDate → $endDate")
         val resp = api.getTransactions(token, startDate, endDate)
         PulseLog.d("PoarVaultRepo", "refreshTransactions: total=${resp.totalTransactions} returned=${resp.transactions.size}")
-        val transactions = resp.transactions
-            .filter { !it.pending }
-            .also { PulseLog.d("PoarVaultRepo", "refreshTransactions: ${it.size} non-pending transactions") }
-            .map { t ->
-                PlaidTransaction(
-                    transactionId = t.transactionId,
-                    accountId = t.accountId,
-                    institutionId = institutionId,
-                    name = t.name,
-                    amount = t.amount,
-                    date = t.date,
-                    category = t.category?.firstOrNull(),
-                )
-            }
+        val nonPending = resp.transactions.filter { !it.pending }
+        PulseLog.d("PoarVaultRepo", "refreshTransactions: ${nonPending.size} non-pending transactions")
+
+        // Preserve any user-set category overrides — upsert replaces whole rows
+        val existingOverrides = db.dao()
+            .getOverridesForIds(nonPending.map { it.transactionId })
+            .associate { it.transactionId to it.categoryOverride }
+
+        val transactions = nonPending.map { t ->
+            PlaidTransaction(
+                transactionId = t.transactionId,
+                accountId = t.accountId,
+                institutionId = institutionId,
+                name = t.name,
+                amount = t.amount,
+                date = t.date,
+                category = t.category?.firstOrNull(),
+                pfcPrimary = t.personalFinanceCategory?.primary,
+                pfcDetailed = t.personalFinanceCategory?.detailed,
+                categoryOverride = existingOverrides[t.transactionId],
+            )
+        }
         db.dao().upsertTransactions(transactions)
         PulseLog.d("PoarVaultRepo", "refreshTransactions: upserted ${transactions.size} transactions")
     }

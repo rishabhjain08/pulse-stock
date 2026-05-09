@@ -91,6 +91,11 @@ data class InstitutionWithAccounts(
 
 // ── Transactions ─────────────────────────────────────────────────────────────
 
+@Serializable data class PersonalFinanceCategoryApi(
+    val primary: String,
+    val detailed: String,
+)
+
 @Serializable data class PlaidApiTransaction(
     @SerialName("transaction_id") val transactionId: String,
     @SerialName("account_id") val accountId: String,
@@ -98,6 +103,7 @@ data class InstitutionWithAccounts(
     val amount: Double,
     val date: String,
     val category: List<String>? = null,
+    @SerialName("personal_finance_category") val personalFinanceCategory: PersonalFinanceCategoryApi? = null,
     val pending: Boolean = false,
 )
 
