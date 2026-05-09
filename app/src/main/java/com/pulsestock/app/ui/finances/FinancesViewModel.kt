@@ -33,9 +33,9 @@ enum class ReconcileFilter { TO_LINK, LINKED, DISMISSED, ALL }
 
 enum class SpendingWindow(val label: String) {
     STATEMENT("Statement"),
+    CURRENT_BALANCE("Current balance"),
     LAST_30_DAYS("Last 30 days"),
     THIS_MONTH("This month"),
-    ALL_SYNCED("All synced"),
 }
 
 data class LinkSheetState(
@@ -390,12 +390,19 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             SpendingWindow.THIS_MONTH -> accounts.map { a ->
                 AccountDateRange(a.accountId, today.withDayOfMonth(1).toString(), today.toString())
             }
-            SpendingWindow.ALL_SYNCED -> accounts.map { a ->
-                AccountDateRange(a.accountId, today.minusDays(89).toString(), today.toString())
-            }
             SpendingWindow.STATEMENT -> accounts.map { a ->
                 val (start, end) = statementWindow(a, today)
                 AccountDateRange(a.accountId, start, end)
+            }
+            SpendingWindow.CURRENT_BALANCE -> accounts.map { a ->
+                // Transactions since the statement closed — these make up the current balance
+                val statementClose = a.lastStatementDate
+                    ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                    ?: a.nextDueDate
+                        ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                        ?.minusDays(21)
+                val start = statementClose?.plusDays(1) ?: today.minusDays(29)
+                AccountDateRange(a.accountId, start.toString(), today.toString())
             }
         }
     }
@@ -427,14 +434,13 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         if (ranges.isEmpty()) return null
         val fmt = DateTimeFormatter.ofPattern("MMM d")
         return when (window) {
-            SpendingWindow.THIS_MONTH, SpendingWindow.ALL_SYNCED -> null
+            SpendingWindow.THIS_MONTH -> null
             SpendingWindow.LAST_30_DAYS -> {
                 val start = LocalDate.parse(ranges.first().startDate).format(fmt)
                 val end = LocalDate.parse(ranges.first().endDate).format(fmt)
                 "$start – $end"
             }
             SpendingWindow.STATEMENT -> {
-                // Show per-card if single card, union span + count if multiple
                 if (accounts.size == 1) {
                     val r = ranges.first()
                     "${LocalDate.parse(r.startDate).format(fmt)} – ${LocalDate.parse(r.endDate).format(fmt)}"
@@ -442,6 +448,16 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     val earliest = ranges.minOf { LocalDate.parse(it.startDate) }
                     val latest = ranges.maxOf { LocalDate.parse(it.endDate) }
                     "${earliest.format(fmt)} – ${latest.format(fmt)} · ${accounts.size} cards"
+                }
+            }
+            SpendingWindow.CURRENT_BALANCE -> {
+                // Show "since <close date>" per card, or union start if multiple
+                if (accounts.size == 1) {
+                    val start = LocalDate.parse(ranges.first().startDate).format(fmt)
+                    "Since $start"
+                } else {
+                    val earliest = ranges.minOf { LocalDate.parse(it.startDate) }
+                    "Since ${earliest.format(fmt)} · ${accounts.size} cards"
                 }
             }
         }
