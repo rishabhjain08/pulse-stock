@@ -368,6 +368,29 @@ cd infra && npm run destroy
 
 Deletes both CloudFormation stacks and all `/poarvault/*` SSM parameters. The S3 artifact bucket is **retained** (by `DeletionPolicy: Retain` in the bootstrap template) so your Lambda zip history isn't accidentally destroyed. To fully clean up, empty and delete the bucket manually after running destroy.
 
+### Rotating the API key
+
+Run this any time the `POARVAULT_API_KEY` may have been exposed (e.g., accidentally committed to git):
+
+```bash
+cd infra && node scripts/rotate-api-key.js
+```
+
+The script:
+1. Generates a new random 64-character hex key
+2. Overwrites `/poarvault/api-key` in SSM
+3. Touches each Lambda function's configuration to force cold starts — this flushes the module-level SSM cache in `shared.js` so the old key is no longer accepted immediately
+4. Prints the new key — copy it to `local.properties` as `POARVAULT_API_KEY`
+
+Requires `infra/.env` to be present with valid AWS credentials and `aws` CLI installed.
+
+**If credentials were committed to a public repo**, also:
+- Rotate `PLAID_SECRET` in the Plaid dashboard
+- Rotate `SPLITWISE_CONSUMER_SECRET` at `https://secure.splitwise.com/oauth_clients`
+- Rotate `FINNHUB_API_KEY` at `https://finnhub.io/dashboard`
+- Rotate the AWS IAM user's access keys in the IAM console
+- Clean git history with `git filter-repo --path <file> --invert-paths`, then force-push
+
 ---
 
 ## Data & Privacy

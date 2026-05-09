@@ -4,10 +4,11 @@
   "private": true,
   "description": "Setup scripts for PoarVault AWS backend. Requires Node.js 20+.",
   "scripts": {
-    "setup":   "node scripts/setup.js",
-    "deploy":  "node scripts/deploy.js",
-    "destroy": "node scripts/destroy.js",
-    "outputs": "node scripts/get-outputs.js"
+    "setup":          "node scripts/setup.js",
+    "deploy":         "node scripts/deploy.js",
+    "destroy":        "node scripts/destroy.js",
+    "outputs":        "node scripts/get-outputs.js",
+    "rotate-api-key": "node scripts/rotate-api-key.js"
   },
   "dependencies": {
     "@aws-sdk/client-cloudformation": "^3.0.0",
