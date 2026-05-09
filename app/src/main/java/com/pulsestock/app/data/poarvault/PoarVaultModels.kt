@@ -107,6 +107,8 @@ data class InstitutionWithAccounts(
     val date: String,
     val category: List<String>? = null,
     @SerialName("personal_finance_category") val personalFinanceCategory: PersonalFinanceCategoryApi? = null,
+    // Plaid's normalized merchant name — already deduped ("Starbucks", not "STARBUCKS #1234").
+    @SerialName("merchant_name") val merchantName: String? = null,
     val pending: Boolean = false,
 )
 

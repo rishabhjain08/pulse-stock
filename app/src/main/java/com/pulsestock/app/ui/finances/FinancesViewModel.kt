@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsestock.app.data.poarvault.AccountDateRange
 import com.pulsestock.app.data.poarvault.AccountEntity
+import com.pulsestock.app.data.poarvault.MerchantRuleProposal
 import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.data.poarvault.ExpenseWithLinks
 import com.pulsestock.app.data.poarvault.PlaidTransaction
@@ -70,6 +71,8 @@ data class FinancesUiState(
     val drillDownTransactions: List<PlaidTransaction> = emptyList(),
     val overridingTransaction: PlaidTransaction? = null,
     val customCategories: List<String> = emptyList(),
+    // Non-null when the user should be asked to apply an override to all matching transactions.
+    val pendingMerchantRule: MerchantRuleProposal? = null,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -351,19 +354,29 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
     fun applyOverride(transactionId: String, category: String?) {
         viewModelScope.launch {
-            repo.setCategoryOverride(transactionId, category)
+            val proposal = repo.setCategoryOverride(transactionId, category)
             val drillCategory = _uiState.value.categoryDrillDown
-            if (drillCategory != null) {
+            val newState = if (drillCategory != null) {
                 val ranges = currentSpendingRanges()
                 val txns = repo.getTransactionsForCategory(ranges, drillCategory)
-                _uiState.value = _uiState.value.copy(
-                    drillDownTransactions = txns,
-                    overridingTransaction = null,
-                )
+                _uiState.value.copy(drillDownTransactions = txns, overridingTransaction = null)
             } else {
-                _uiState.value = _uiState.value.copy(overridingTransaction = null)
+                _uiState.value.copy(overridingTransaction = null)
             }
+            _uiState.value = newState.copy(pendingMerchantRule = proposal)
         }
+    }
+
+    fun confirmMerchantRule() {
+        val proposal = _uiState.value.pendingMerchantRule ?: return
+        _uiState.value = _uiState.value.copy(pendingMerchantRule = null)
+        viewModelScope.launch {
+            repo.applyRuleToAllMatching(proposal.merchantName, proposal.category)
+        }
+    }
+
+    fun dismissMerchantRule() {
+        _uiState.value = _uiState.value.copy(pendingMerchantRule = null)
     }
 
     fun toggleIncludeReimbursements() {

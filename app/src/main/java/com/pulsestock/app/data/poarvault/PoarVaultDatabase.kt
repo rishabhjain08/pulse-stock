@@ -16,8 +16,9 @@ import net.sqlcipher.database.SupportFactory
         PlaidTransaction::class,
         SplitwiseExpense::class,
         SplitwisePlaidLink::class,
+        CategoryRule::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class PoarVaultDatabase : RoomDatabase() {
@@ -86,6 +87,19 @@ abstract class PoarVaultDatabase : RoomDatabase() {
             }
         }
 
+        // v6→v7: add merchantName to transactions; add category_rules table
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE plaid_transactions ADD COLUMN merchantName TEXT")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS category_rules (
+                        merchantName TEXT NOT NULL PRIMARY KEY,
+                        category TEXT NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
         @VisibleForTesting
         fun getInMemory(context: Context): PoarVaultDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, PoarVaultDatabase::class.java)
@@ -101,7 +115,7 @@ abstract class PoarVaultDatabase : RoomDatabase() {
                         "poarvault.db",
                     )
                     .openHelperFactory(SupportFactory(passphrase))
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .build()
                     .also { INSTANCE = it }
             }

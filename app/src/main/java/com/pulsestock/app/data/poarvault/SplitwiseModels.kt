@@ -67,7 +67,17 @@ data class PlaidTransaction(
     val pfcPrimary: String? = null,    // e.g. "FOOD_AND_DRINK"
     val pfcDetailed: String? = null,   // e.g. "FOOD_AND_DRINK_RESTAURANTS"
     val categoryOverride: String? = null,
+    // Plaid's already-normalized merchant name ("Starbucks", "Amazon") — used for rule matching.
+    // Null when Plaid doesn't provide one; rules are skipped for those transactions.
+    val merchantName: String? = null,
     val cachedAt: Long = System.currentTimeMillis(),
+)
+
+/** A persisted rule: every transaction from [merchantName] gets [category] as its override. */
+@Entity(tableName = "category_rules")
+data class CategoryRule(
+    @PrimaryKey val merchantName: String,
+    val category: String,
 )
 
 // Effective category priority: categoryOverride > pfcDetailed > pfcPrimary > category

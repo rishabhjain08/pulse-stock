@@ -38,7 +38,9 @@ import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -152,6 +154,28 @@ fun FinancesScreen(
                 onDismiss = vm::cancelOverride,
             )
         }
+    }
+
+    // Merchant rule confirmation dialog
+    val proposal = state.pendingMerchantRule
+    if (proposal != null) {
+        AlertDialog(
+            onDismissRequest = vm::dismissMerchantRule,
+            title = { Text("Apply to all ${proposal.merchantName}?") },
+            text = {
+                Text(
+                    "Set '${proposal.category}' for ${proposal.otherCount} other " +
+                    "${proposal.merchantName} transaction${if (proposal.otherCount == 1) "" else "s"} " +
+                    "and remember this rule for future syncs."
+                )
+            },
+            confirmButton = {
+                Button(onClick = vm::confirmMerchantRule) { Text("Apply to all") }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissMerchantRule) { Text("Just this one") }
+            },
+        )
     }
 
     Scaffold(

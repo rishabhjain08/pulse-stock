@@ -6,6 +6,16 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import java.time.LocalDate
 
+/**
+ * Returned after setting a single-transaction override when Plaid knows the merchant name.
+ * The ViewModel uses this to prompt the user: "Apply to [otherCount] other transactions?"
+ */
+data class MerchantRuleProposal(
+    val merchantName: String,
+    val category: String,
+    val otherCount: Int,
+)
+
 /** One row of the per-account date window used when building category-breakdown queries. */
 data class AccountDateRange(
     val accountId: String,
@@ -108,8 +118,34 @@ class PoarVaultRepository(
         return db.dao().getTransactionsForCategoryRaw(query)
     }
 
-    suspend fun setCategoryOverride(transactionId: String, override: String?) =
+    /**
+     * Sets the override for a single transaction, then checks whether Plaid knows the merchant
+     * name and whether other transactions share it.
+     *
+     * Returns a [MerchantRuleProposal] when the user should be prompted to apply the override
+     * to all matching transactions, or null when no prompt is needed (clear override, or no
+     * merchantName available, or this is the only transaction for that merchant).
+     */
+    suspend fun setCategoryOverride(
+        transactionId: String,
+        override: String?,
+    ): MerchantRuleProposal? {
+        // Read merchantName before writing so we don't need a second read.
+        val merchantName = db.dao()
+            .getTransactionsByIds(listOf(transactionId))
+            .firstOrNull()?.merchantName
         db.dao().setCategoryOverride(transactionId, override)
+        if (override == null || merchantName == null) return null
+        val otherCount = db.dao().countOtherTransactionsForMerchant(merchantName, transactionId)
+        return if (otherCount > 0) MerchantRuleProposal(merchantName, override, otherCount) else null
+    }
+
+    /** Applies [category] to all existing transactions for [merchantName] and saves the rule. */
+    suspend fun applyRuleToAllMatching(merchantName: String, category: String) {
+        db.dao().applyOverrideToMerchant(merchantName, category)
+        db.dao().upsertCategoryRule(CategoryRule(merchantName, category))
+        PulseLog.d("PoarVaultRepo", "applyRuleToAllMatching: $merchantName → $category")
+    }
 
     fun watchCustomCategories(): Flow<List<String>> = db.dao().watchCustomCategories()
 
@@ -132,7 +168,13 @@ class PoarVaultRepository(
             .getOverridesForIds(nonPending.map { it.transactionId })
             .associate { it.transactionId to it.categoryOverride }
 
+        // Pre-load all rules so we don't query per-transaction in the loop.
+        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.category }
+
         val transactions = nonPending.map { t ->
+            // Priority: explicit per-transaction override > saved merchant rule > none
+            val override = existingOverrides[t.transactionId]
+                ?: t.merchantName?.let { rules[it] }
             PlaidTransaction(
                 transactionId = t.transactionId,
                 accountId = t.accountId,
@@ -143,7 +185,8 @@ class PoarVaultRepository(
                 category = t.category?.firstOrNull(),
                 pfcPrimary = t.personalFinanceCategory?.primary,
                 pfcDetailed = t.personalFinanceCategory?.detailed,
-                categoryOverride = existingOverrides[t.transactionId],
+                categoryOverride = override,
+                merchantName = t.merchantName,
             )
         }
         db.dao().upsertTransactions(transactions)

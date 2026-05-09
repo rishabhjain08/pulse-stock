@@ -76,9 +76,30 @@ interface PoarVaultDao {
     @Query("UPDATE plaid_transactions SET categoryOverride = :override WHERE transactionId = :id")
     suspend fun setCategoryOverride(id: String, override: String?)
 
+    @Query("UPDATE plaid_transactions SET categoryOverride = :category WHERE merchantName = :merchantName")
+    suspend fun applyOverrideToMerchant(merchantName: String, category: String)
+
+    /** Count transactions for this merchant that are NOT the transaction just overridden. */
+    @Query("SELECT COUNT(*) FROM plaid_transactions WHERE merchantName = :merchantName AND transactionId != :excludeId")
+    suspend fun countOtherTransactionsForMerchant(merchantName: String, excludeId: String): Int
+
     @Query("SELECT transactionId, categoryOverride FROM plaid_transactions WHERE transactionId IN (:ids)")
     suspend fun getOverridesForIds(ids: List<String>): List<TransactionOverride>
 
     @Query("SELECT DISTINCT categoryOverride FROM plaid_transactions WHERE categoryOverride IS NOT NULL ORDER BY categoryOverride ASC")
     fun watchCustomCategories(): Flow<List<String>>
+
+    // ── Category rules ────────────────────────────────────────────────────────
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCategoryRule(rule: CategoryRule)
+
+    @Query("DELETE FROM category_rules WHERE merchantName = :merchantName")
+    suspend fun deleteCategoryRule(merchantName: String)
+
+    @Query("SELECT * FROM category_rules WHERE merchantName = :merchantName LIMIT 1")
+    suspend fun getRuleForMerchant(merchantName: String): CategoryRule?
+
+    @Query("SELECT * FROM category_rules")
+    suspend fun getAllCategoryRules(): List<CategoryRule>
 }
