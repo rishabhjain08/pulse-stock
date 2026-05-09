@@ -1,13 +1,18 @@
 package com.pulsestock.app.ui.finances
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,10 +70,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlin.math.atan2
+import kotlin.math.sqrt
 import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.data.poarvault.AccountEntity
 import com.pulsestock.app.data.poarvault.CategorySpend
@@ -610,6 +623,17 @@ private fun CategoryBreakdownCard(
             } else {
                 Spacer(Modifier.height(8.dp))
             }
+            // Donut chart — shown whenever there's data to display
+            if (breakdown.isNotEmpty()) {
+                SpendingDonutChart(
+                    breakdown = breakdown,
+                    onSegmentTap = onCategoryTap,
+                    currencyFmt = currencyFmt,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(vertical = 8.dp),
+                )
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (breakdown.isEmpty()) {
                 Spacer(Modifier.height(12.dp))
@@ -680,6 +704,107 @@ private fun SpendingWindowDropdown(
                     onClick = { onSelect(window); expanded = false },
                 )
             }
+        }
+    }
+}
+
+// ── Donut chart ───────────────────────────────────────────────────────────────
+
+private val donutSegmentColors = listOf(
+    Color(0xFF6750A4), Color(0xFF0286C2), Color(0xFF00897B), Color(0xFFE65100),
+    Color(0xFF558B2F), Color(0xFF7B1FA2), Color(0xFFC62828), Color(0xFF00838F),
+    Color(0xFFF9A825), Color(0xFF4527A0), Color(0xFF2E7D32), Color(0xFFAD1457),
+)
+
+@Composable
+private fun SpendingDonutChart(
+    breakdown: List<CategorySpend>,
+    onSegmentTap: (String) -> Unit,
+    currencyFmt: NumberFormat,
+    modifier: Modifier = Modifier,
+) {
+    val total = breakdown.sumOf { it.totalAmount }.toFloat()
+    if (total <= 0f) return
+
+    val sweepAngles = remember(breakdown) {
+        breakdown.map { (it.totalAmount / total * 360f).toFloat() }
+    }
+    val colors = remember(breakdown) {
+        breakdown.mapIndexed { i, _ -> donutSegmentColors[i % donutSegmentColors.size] }
+    }
+
+    // Entry animation: arcs sweep in from 0 → full on first composition
+    var animatedIn by remember { mutableStateOf(false) }
+    LaunchedEffect(breakdown) { animatedIn = true }
+    val progress by animateFloatAsState(
+        targetValue = if (animatedIn) 1f else 0f,
+        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+        label = "donut_entry",
+    )
+
+    Box(
+        modifier = modifier
+            .size(160.dp)
+            .pointerInput(breakdown) {
+                detectTapGestures { offset ->
+                    val cx = size.width / 2f
+                    val cy = size.height / 2f
+                    val dx = offset.x - cx
+                    val dy = offset.y - cy
+                    val dist = sqrt(dx * dx + dy * dy)
+                    val innerR = size.width * 0.275f
+                    val outerR = size.width * 0.5f
+                    if (dist < innerR || dist > outerR) return@detectTapGestures
+                    var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
+                    if (angle < 0f) angle += 360f
+                    var cumulative = 0f
+                    breakdown.forEachIndexed { i, spend ->
+                        val end = cumulative + sweepAngles[i]
+                        if (angle in cumulative..end) {
+                            onSegmentTap(spend.effectiveCategory)
+                            return@detectTapGestures
+                        }
+                        cumulative = end
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokeWidth = size.width * 0.22f
+            val inset = strokeWidth / 2f
+            val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
+            val topLeft = Offset(inset, inset)
+            val gapDeg = if (breakdown.size > 1) 1.5f else 0f
+            var startAngle = -90f
+            breakdown.forEachIndexed { i, _ ->
+                val raw = sweepAngles[i]
+                val sweep = ((raw - gapDeg).coerceAtLeast(0.5f)) * progress
+                drawArc(
+                    color = colors[i],
+                    startAngle = startAngle,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Butt),
+                )
+                startAngle += raw
+            }
+        }
+        // Center label: total spend
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = currencyFmt.format(total.toDouble()),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = "total",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
