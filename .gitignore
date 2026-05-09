@@ -21,3 +21,7 @@ keystore/
 # PoarVault backend — AWS credentials and Plaid secrets
 infra/.env
 infra/node_modules/
+infra/lambda/node_modules/
+
+# Duplicate local.properties files
+local.properties.*
