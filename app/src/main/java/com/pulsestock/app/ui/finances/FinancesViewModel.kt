@@ -83,6 +83,8 @@ data class FinancesUiState(
     val isBulkMode: Boolean = false,
     val bulkSelectedIds: Set<String> = emptySet(),
     val isBulkPickerOpen: Boolean = false,
+    // All-transactions mode: show every credit tx for the window, not filtered by category
+    val allTransactionsMode: Boolean = false,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -367,12 +369,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     fun closeCategoryDrillDown() {
         _uiState.value = _uiState.value.copy(
             categoryDrillDown = null,
+            allTransactionsMode = false,
             drillDownTransactions = emptyList(),
             overridingTransaction = null,
             isBulkMode = false,
             bulkSelectedIds = emptySet(),
             isBulkPickerOpen = false,
         )
+    }
+
+    fun openAllTransactionsDrillDown() {
+        viewModelScope.launch {
+            val txns = repo.getTransactionsForWindow(currentSpendingRanges())
+            _uiState.value = _uiState.value.copy(
+                allTransactionsMode = true,
+                drillDownTransactions = txns,
+                isBulkMode = true,
+                bulkSelectedIds = emptySet(),
+            )
+        }
     }
 
     fun startOverride(tx: PlaidTransaction) {
@@ -474,10 +489,15 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
             // Refresh the drill-down transaction list.
             val drillCategory = _uiState.value.categoryDrillDown
-            val newTxns = if (drillCategory != null) {
-                val allCodes = _uiState.value.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
-                repo.getTransactionsForCategory(currentSpendingRanges(), allCodes)
-            } else _uiState.value.drillDownTransactions
+            val newTxns = when {
+                _uiState.value.allTransactionsMode ->
+                    repo.getTransactionsForWindow(currentSpendingRanges())
+                drillCategory != null -> {
+                    val allCodes = _uiState.value.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
+                    repo.getTransactionsForCategory(currentSpendingRanges(), allCodes)
+                }
+                else -> _uiState.value.drillDownTransactions
+            }
 
             _uiState.value = _uiState.value.copy(
                 bulkSelectedIds = emptySet(),

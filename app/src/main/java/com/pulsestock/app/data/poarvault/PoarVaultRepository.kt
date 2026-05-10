@@ -118,6 +118,12 @@ class PoarVaultRepository(
         return db.dao().getTransactionsForCategoryRaw(query)
     }
 
+    suspend fun getTransactionsForWindow(ranges: List<AccountDateRange>): List<PlaidTransaction> {
+        if (ranges.isEmpty()) return emptyList()
+        val query = buildTransactionsForWindowQuery(ranges)
+        return db.dao().getTransactionsForCategoryRaw(query)
+    }
+
     /**
      * Sets the override for a single transaction, then checks whether Plaid knows the merchant
      * name and whether other transactions share it.
@@ -240,6 +246,22 @@ class PoarVaultRepository(
         )
         val args = mutableListOf<Any>()
         args.addAll(categories)
+        ranges.forEachIndexed { i, r ->
+            if (i > 0) sb.append(" OR ")
+            sb.append("(pt.accountId = ? AND pt.date >= ? AND pt.date <= ?)")
+            args.addAll(listOf(r.accountId, r.startDate, r.endDate))
+        }
+        sb.append(") ORDER BY pt.date DESC")
+        return SimpleSQLiteQuery(sb.toString(), args.toTypedArray())
+    }
+
+    private fun buildTransactionsForWindowQuery(ranges: List<AccountDateRange>): SimpleSQLiteQuery {
+        val sb = StringBuilder(
+            """SELECT pt.* FROM plaid_transactions pt
+        INNER JOIN accounts a ON pt.accountId = a.accountId
+        WHERE a.type = 'credit' AND ("""
+        )
+        val args = mutableListOf<Any>()
         ranges.forEachIndexed { i, r ->
             if (i > 0) sb.append(" OR ")
             sb.append("(pt.accountId = ? AND pt.date >= ? AND pt.date <= ?)")

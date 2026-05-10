@@ -131,15 +131,13 @@ fun FinancesScreen(
         vm.dismissError()
     }
 
-    // Category drill-down sheet
-    if (state.categoryDrillDown != null) {
+    // Category drill-down sheet — also shown when allTransactionsMode is active
+    if (state.categoryDrillDown != null || state.allTransactionsMode) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
             onDismissRequest = vm::closeCategoryDrillDown,
             sheetState = sheetState,
-            // M3 drag handle rendered by BottomSheetDefaults.DragHandle()
             dragHandle = { BottomSheetDefaults.DragHandle() },
-            // Use surface container so the sheet has tonal lift above page background
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             CategoryDrillDownSheet(
@@ -149,6 +147,7 @@ fun FinancesScreen(
                 onEditCategory = vm::startOverride,
                 onDismiss = vm::closeCategoryDrillDown,
                 isBulkMode = state.isBulkMode,
+                isAllTransactionsMode = state.allTransactionsMode,
                 bulkSelectedIds = state.bulkSelectedIds,
                 onEnterBulkMode = vm::enterBulkMode,
                 onExitBulkMode = vm::exitBulkMode,
@@ -290,6 +289,7 @@ fun FinancesScreen(
                             selectedSpendingAccountIds = state.selectedSpendingAccountIds,
                             onToggleAccount = vm::toggleSpendingAccount,
                             onCategoryTap = vm::openCategoryDrillDown,
+                            onManage = vm::openAllTransactionsDrillDown,
                             currencyFmt = currencyFmt,
                         )
                     }
@@ -633,6 +633,7 @@ private fun CategoryBreakdownCard(
     selectedSpendingAccountIds: Set<String>?,
     onToggleAccount: (String) -> Unit,
     onCategoryTap: (String) -> Unit,
+    onManage: () -> Unit,
     currencyFmt: NumberFormat,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -655,7 +656,7 @@ private fun CategoryBreakdownCard(
                     ),
                 ),
         ) {
-            // Header row: title + time-period dropdown
+            // Header row: title + manage button + time-period dropdown
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -667,7 +668,20 @@ private fun CategoryBreakdownCard(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                SpendingWindowDropdown(selected = spendingWindow, onSelect = onWindowChange)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (breakdown.isNotEmpty()) {
+                        TextButton(
+                            onClick = onManage,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = "Manage",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                    SpendingWindowDropdown(selected = spendingWindow, onSelect = onWindowChange)
+                }
             }
             // Date range subtitle
             if (dateRangeLabel != null) {
@@ -962,6 +976,7 @@ private fun CategoryDrillDownSheet(
     onEditCategory: (PlaidTransaction) -> Unit,
     onDismiss: () -> Unit,
     isBulkMode: Boolean = false,
+    isAllTransactionsMode: Boolean = false,
     bulkSelectedIds: Set<String> = emptySet(),
     onEnterBulkMode: () -> Unit = {},
     onExitBulkMode: () -> Unit = {},
@@ -989,13 +1004,16 @@ private fun CategoryDrillDownSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (isBulkMode) {
-                    // Bulk mode: X to cancel, title shows selection count, Done to finish
-                    IconButton(onClick = onExitBulkMode) {
-                        Icon(Icons.Default.Close, contentDescription = "Exit bulk mode")
+                    // Bulk mode: X dismisses sheet, title shows count or "All Transactions"
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                     Text(
-                        text = if (bulkSelectedIds.isEmpty()) "Select transactions"
-                               else "${bulkSelectedIds.size} selected",
+                        text = when {
+                            bulkSelectedIds.isNotEmpty() -> "${bulkSelectedIds.size} selected"
+                            isAllTransactionsMode -> "All Transactions"
+                            else -> "Select transactions"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1025,7 +1043,6 @@ private fun CategoryDrillDownSheet(
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    TextButton(onClick = onEnterBulkMode) { Text("Select") }
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -1069,6 +1086,21 @@ private fun CategoryDrillDownSheet(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (isAllTransactionsMode) {
+                            val txMeta = CategoryMeta.get(tx.effectiveCategory)
+                            Spacer(Modifier.height(3.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                            ) {
+                                Text(
+                                    text = "${txMeta.emoji} ${txMeta.displayName}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
                         if (tx.categoryOverride != null) {
                             Text(
                                 text = "Overridden",
@@ -1329,7 +1361,7 @@ private fun CategoryPickerSheet(
         val orphanDisplayName = effectiveCat?.let { CategoryMeta.get(it).displayName }
         val showOrphan = effectiveCat != null && !effectiveCatInQuickPicks && !effectiveCatInCustom &&
             orphanDisplayName !in quickPickDisplayNames
-        if (showOrphan && effectiveCat != null) {
+        if (showOrphan) {
             val orphanMeta = CategoryMeta.get(effectiveCat)
             CategoryPickerRow(
                 emoji = orphanMeta.emoji,
