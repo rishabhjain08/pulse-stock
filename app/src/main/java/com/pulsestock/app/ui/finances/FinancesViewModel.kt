@@ -77,6 +77,12 @@ data class FinancesUiState(
     val customCategories: List<String> = emptyList(),
     // Non-null when the user should be asked to apply an override to all matching transactions.
     val pendingMerchantRule: MerchantRuleProposal? = null,
+    // Merchant rule dialogs queued up after a bulk-assign operation (shown sequentially).
+    val pendingMerchantRuleQueue: List<MerchantRuleProposal> = emptyList(),
+    // Bulk categorization mode
+    val isBulkMode: Boolean = false,
+    val bulkSelectedIds: Set<String> = emptySet(),
+    val isBulkPickerOpen: Boolean = false,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -363,6 +369,9 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             categoryDrillDown = null,
             drillDownTransactions = emptyList(),
             overridingTransaction = null,
+            isBulkMode = false,
+            bulkSelectedIds = emptySet(),
+            isBulkPickerOpen = false,
         )
     }
 
@@ -403,14 +412,81 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
     fun confirmMerchantRule() {
         val proposal = _uiState.value.pendingMerchantRule ?: return
-        _uiState.value = _uiState.value.copy(pendingMerchantRule = null)
+        val queue = _uiState.value.pendingMerchantRuleQueue
+        _uiState.value = _uiState.value.copy(
+            pendingMerchantRule = queue.firstOrNull(),
+            pendingMerchantRuleQueue = queue.drop(1),
+        )
         viewModelScope.launch {
             repo.applyRuleToAllMatching(proposal.merchantName, proposal.category)
         }
     }
 
     fun dismissMerchantRule() {
-        _uiState.value = _uiState.value.copy(pendingMerchantRule = null)
+        val queue = _uiState.value.pendingMerchantRuleQueue
+        _uiState.value = _uiState.value.copy(
+            pendingMerchantRule = queue.firstOrNull(),
+            pendingMerchantRuleQueue = queue.drop(1),
+        )
+    }
+
+    // ── Bulk categorization mode ──────────────────────────────────────────────
+
+    fun enterBulkMode() {
+        _uiState.value = _uiState.value.copy(isBulkMode = true, bulkSelectedIds = emptySet())
+    }
+
+    fun exitBulkMode() {
+        _uiState.value = _uiState.value.copy(
+            isBulkMode = false,
+            bulkSelectedIds = emptySet(),
+            isBulkPickerOpen = false,
+        )
+    }
+
+    fun toggleBulkSelection(transactionId: String) {
+        val current = _uiState.value.bulkSelectedIds
+        _uiState.value = _uiState.value.copy(
+            bulkSelectedIds = if (transactionId in current) current - transactionId else current + transactionId
+        )
+    }
+
+    fun openBulkPicker() {
+        _uiState.value = _uiState.value.copy(isBulkPickerOpen = true)
+    }
+
+    fun closeBulkPicker() {
+        _uiState.value = _uiState.value.copy(isBulkPickerOpen = false)
+    }
+
+    fun applyBulkCategory(category: String) {
+        viewModelScope.launch {
+            val selectedIds = _uiState.value.bulkSelectedIds.toList()
+            if (selectedIds.isEmpty()) return@launch
+
+            // Apply override to all selected; collect unique merchant proposals.
+            val seenMerchants = mutableSetOf<String>()
+            val proposals = mutableListOf<MerchantRuleProposal>()
+            selectedIds.forEach { id ->
+                val p = repo.setCategoryOverride(id, category)
+                if (p != null && seenMerchants.add(p.merchantName)) proposals.add(p)
+            }
+
+            // Refresh the drill-down transaction list.
+            val drillCategory = _uiState.value.categoryDrillDown
+            val newTxns = if (drillCategory != null) {
+                val allCodes = _uiState.value.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
+                repo.getTransactionsForCategory(currentSpendingRanges(), allCodes)
+            } else _uiState.value.drillDownTransactions
+
+            _uiState.value = _uiState.value.copy(
+                bulkSelectedIds = emptySet(),
+                isBulkPickerOpen = false,
+                drillDownTransactions = newTxns,
+                pendingMerchantRule = proposals.firstOrNull(),
+                pendingMerchantRuleQueue = proposals.drop(1),
+            )
+        }
     }
 
     fun toggleIncludeReimbursements() {

@@ -1,6 +1,7 @@
 package com.pulsestock.app.ui.finances
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -48,6 +49,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -145,11 +148,17 @@ fun FinancesScreen(
                 currencyFmt = currencyFmt,
                 onEditCategory = vm::startOverride,
                 onDismiss = vm::closeCategoryDrillDown,
+                isBulkMode = state.isBulkMode,
+                bulkSelectedIds = state.bulkSelectedIds,
+                onEnterBulkMode = vm::enterBulkMode,
+                onExitBulkMode = vm::exitBulkMode,
+                onToggleBulkSelection = vm::toggleBulkSelection,
+                onOpenBulkPicker = vm::openBulkPicker,
             )
         }
     }
 
-    // Category override picker sheet
+    // Category override picker sheet (single transaction)
     val overridingTx = state.overridingTransaction
     if (overridingTx != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -167,6 +176,29 @@ fun FinancesScreen(
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
                 onDismiss = vm::cancelOverride,
+            )
+        }
+    }
+
+    // Bulk category picker sheet
+    if (state.isBulkPickerOpen) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = vm::closeBulkPicker,
+            sheetState = sheetState,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            CategoryPickerSheet(
+                transaction = null,
+                customCategories = state.customCategories,
+                onPick = { category -> vm.applyBulkCategory(category) },
+                onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
+                onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
+                countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
+                onDismiss = vm::closeBulkPicker,
+                isBulkMode = true,
+                bulkCount = state.bulkSelectedIds.size,
             )
         }
     }
@@ -929,105 +961,180 @@ private fun CategoryDrillDownSheet(
     currencyFmt: NumberFormat,
     onEditCategory: (PlaidTransaction) -> Unit,
     onDismiss: () -> Unit,
+    isBulkMode: Boolean = false,
+    bulkSelectedIds: Set<String> = emptySet(),
+    onEnterBulkMode: () -> Unit = {},
+    onExitBulkMode: () -> Unit = {},
+    onToggleBulkSelection: (String) -> Unit = {},
+    onOpenBulkPicker: () -> Unit = {},
 ) {
     val meta = CategoryMeta.get(category ?: "OTHER")
-    // Use a Column + verticalScroll so content can scroll without a nested LazyColumn inside
-    // a ModalBottomSheet (nested lazy layouts cause measurement issues).
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 32.dp),
-    ) {
-        // Sheet header — M3 pattern: left-aligned title with emoji badge + total amount on right.
-        // No Surface wrapper needed — the sheet's containerColor provides the background.
-        Row(
+    val rowBgSelected = MaterialTheme.colorScheme.secondaryContainer
+    val rowBgDefault = MaterialTheme.colorScheme.surfaceContainerHigh
+    // Outer Box so the sticky bottom bar can overlay the scroll content.
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                // Extra bottom padding in bulk mode so the sticky bar doesn't obscure last row.
+                .padding(bottom = if (isBulkMode) 88.dp else 32.dp),
         ) {
-            // Emoji badge — decorative; meaning conveyed by displayName text beside it.
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = meta.emoji,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = meta.displayName,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = currencyFmt.format(transactions.sumOf { it.amount }),
-                style = MaterialTheme.typography.titleMedium,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Spacer(Modifier.height(4.dp))
-        transactions.forEach { tx ->
+            // ── Header row ────────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp),
+                    .padding(bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                if (isBulkMode) {
+                    // Bulk mode: X to cancel, title shows selection count, Done to finish
+                    IconButton(onClick = onExitBulkMode) {
+                        Icon(Icons.Default.Close, contentDescription = "Exit bulk mode")
+                    }
                     Text(
-                        text = tx.name,
+                        text = if (bulkSelectedIds.isEmpty()) "Select transactions"
+                               else "${bulkSelectedIds.size} selected",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onDismiss) { Text("Done") }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(text = meta.emoji, style = MaterialTheme.typography.titleLarge) }
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = meta.displayName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = currencyFmt.format(transactions.sumOf { it.amount }),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    TextButton(onClick = onEnterBulkMode) { Text("Select") }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(4.dp))
+
+            // ── Transaction rows ───────────────────────────────────────────────
+            transactions.forEach { tx ->
+                val isSelected = tx.transactionId in bulkSelectedIds
+                val rowBg by animateColorAsState(
+                    if (isBulkMode && isSelected) rowBgSelected else rowBgDefault,
+                    label = "row_bg",
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(rowBg)
+                        .then(
+                            if (isBulkMode)
+                                Modifier.clickable { onToggleBulkSelection(tx.transactionId) }
+                            else Modifier
+                        )
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (isBulkMode) {
+                        Checkbox(
+                            checked = isSelected,
+                            onCheckedChange = { onToggleBulkSelection(tx.transactionId) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = tx.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = tx.date,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (tx.categoryOverride != null) {
+                            Text(
+                                text = "Overridden",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                    }
+                    Text(
+                        text = currencyFmt.format(tx.amount),
                         style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(end = if (isBulkMode) 0.dp else 4.dp),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Spacer(Modifier.height(2.dp))
+                    if (!isBulkMode) {
+                        IconButton(onClick = { onEditCategory(tx) }) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Change category for ${tx.name}",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            }
+        }
+
+        // ── Sticky bulk bottom bar ─────────────────────────────────────────────
+        if (isBulkMode) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 3.dp,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     Text(
-                        text = tx.date,
-                        style = MaterialTheme.typography.labelSmall,
+                        text = if (bulkSelectedIds.isEmpty()) "Tap rows to select"
+                               else "Assign to ${bulkSelectedIds.size} selected",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (tx.categoryOverride != null) {
-                        // "Overridden" badge — tertiary color indicates user-modified state
-                        Text(
-                            text = "Overridden",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.tertiary,
+                    FilledTonalButton(
+                        onClick = onOpenBulkPicker,
+                        enabled = bulkSelectedIds.isNotEmpty(),
+                    ) {
+                        Text("Category")
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
-                Text(
-                    text = currencyFmt.format(tx.amount),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(end = 4.dp),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                // M3 IconButton provides 48dp×48dp touch target by default.
-                IconButton(
-                    onClick = { onEditCategory(tx) },
-                ) {
-                    Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "Change category for ${tx.name}",
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         }
     }
 }
@@ -1043,6 +1150,9 @@ private fun CategoryPickerSheet(
     onDeleteCustomCategory: (String) -> Unit,
     countTransactionsWithOverride: suspend (String) -> Int,
     onDismiss: () -> Unit,
+    // Bulk mode: no pre-selection, custom title/subtitle
+    isBulkMode: Boolean = false,
+    bulkCount: Int = 0,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
     var showChangeHint by remember { mutableStateOf(false) }
@@ -1060,8 +1170,9 @@ private fun CategoryPickerSheet(
     val haptic = LocalHapticFeedback.current
 
     val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
-    val effectiveCat = transaction?.effectiveCategory ?: "OTHER"
-    val hasOverride = transaction?.categoryOverride != null
+    // In bulk mode there is no single pre-selected category — treat as unset.
+    val effectiveCat = if (isBulkMode) null else (transaction?.effectiveCategory ?: "OTHER")
+    val hasOverride = !isBulkMode && transaction?.categoryOverride != null
 
     // Selected floats to top; rest sorted alphabetically by display name
     val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
@@ -1069,8 +1180,8 @@ private fun CategoryPickerSheet(
             .thenBy { CategoryMeta.get(it).displayName })
 
     // Effective category not covered by either list — surface it at top of Categories
-    val effectiveCatInQuickPicks = effectiveCat in quickPickCodes
-    val effectiveCatInCustom = effectiveCat in trulyCustomCategories
+    val effectiveCatInQuickPicks = effectiveCat != null && effectiveCat in quickPickCodes
+    val effectiveCatInCustom = effectiveCat != null && effectiveCat in trulyCustomCategories
 
     pendingDelete?.let { (catName, count) ->
         val meta = CategoryMeta.get(catName)
@@ -1138,13 +1249,20 @@ private fun CategoryPickerSheet(
                 .padding(bottom = 32.dp),
         ) {
         Text(
-            text = "Change category",
+            text = if (isBulkMode) "Assign category" else "Change category",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        if (transaction?.name != null) {
+        if (isBulkMode) {
+            Text(
+                text = "Applies to $bulkCount transaction${if (bulkCount == 1) "" else "s"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+        } else if (transaction?.name != null) {
             Text(
                 text = transaction.name,
                 style = MaterialTheme.typography.bodyMedium,
@@ -1170,9 +1288,9 @@ private fun CategoryPickerSheet(
                 CategoryPickerRow(
                     emoji = meta.emoji,
                     label = meta.displayName,
-                    selected = effectiveCat == cat,
+                    selected = !isBulkMode && effectiveCat == cat,
                     onPick = {
-                        if (effectiveCat == cat) {
+                        if (!isBulkMode && effectiveCat == cat) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             showChangeHint = true
                         } else onPick(cat)
@@ -1208,10 +1326,10 @@ private fun CategoryPickerSheet(
         // Suppress orphan when its display name already appears in quick picks — avoids
         // showing two identically-named rows (e.g. both Gym codes map to "Gym").
         val quickPickDisplayNames = remember { CategoryMeta.quickPicks.map { it.second.displayName }.toSet() }
-        val orphanDisplayName = CategoryMeta.get(effectiveCat).displayName
-        val showOrphan = !effectiveCatInQuickPicks && !effectiveCatInCustom &&
+        val orphanDisplayName = effectiveCat?.let { CategoryMeta.get(it).displayName }
+        val showOrphan = effectiveCat != null && !effectiveCatInQuickPicks && !effectiveCatInCustom &&
             orphanDisplayName !in quickPickDisplayNames
-        if (showOrphan) {
+        if (showOrphan && effectiveCat != null) {
             val orphanMeta = CategoryMeta.get(effectiveCat)
             CategoryPickerRow(
                 emoji = orphanMeta.emoji,
@@ -1226,14 +1344,15 @@ private fun CategoryPickerSheet(
         sortedQuickPicks.forEach { (code, meta) ->
             // Show as selected if effectiveCat is this code OR a sibling code with same displayName
             // (e.g. PERSONAL_CARE_GYMS → shows ENTERTAINMENT_GYMS quickPick as selected)
-            val siblingSelected = !effectiveCatInQuickPicks && !effectiveCatInCustom &&
+            val siblingSelected = effectiveCat != null && !effectiveCatInQuickPicks && !effectiveCatInCustom &&
                 CategoryMeta.get(effectiveCat).displayName == meta.displayName
             CategoryPickerRow(
                 emoji = meta.emoji,
                 label = meta.displayName,
                 selected = effectiveCat == code || siblingSelected,
                 onPick = {
-                    val isSameDisplay = CategoryMeta.get(effectiveCat).displayName == meta.displayName
+                    val isSameDisplay = effectiveCat != null &&
+                        CategoryMeta.get(effectiveCat).displayName == meta.displayName
                     if (effectiveCat == code || (isSameDisplay && !effectiveCatInQuickPicks)) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         showChangeHint = true
