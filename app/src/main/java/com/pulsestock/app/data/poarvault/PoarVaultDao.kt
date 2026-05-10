@@ -25,8 +25,17 @@ interface PoarVaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAccounts(accounts: List<AccountEntity>)
 
+    @Query("SELECT accountId FROM accounts WHERE institutionId = :institutionId")
+    suspend fun accountIdsForInstitution(institutionId: String): List<String>
+
     @Query("DELETE FROM institutions WHERE institutionId = :id")
     suspend fun deleteInstitution(id: String)
+
+    @Query("DELETE FROM plaid_transactions WHERE accountId IN (:accountIds)")
+    suspend fun deleteTransactionsByAccounts(accountIds: List<String>)
+
+    @Query("DELETE FROM balance_snapshots WHERE accountId IN (:accountIds)")
+    suspend fun deleteSnapshotsByAccounts(accountIds: List<String>)
 
     @Query("SELECT institutionId FROM institutions")
     suspend fun allInstitutionIds(): List<String>

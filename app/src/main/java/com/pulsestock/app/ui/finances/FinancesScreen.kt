@@ -13,12 +13,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +21,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -82,13 +78,19 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -120,6 +122,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlin.math.atan2
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 import kotlin.math.sqrt
 import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.data.poarvault.AccountEntity
@@ -709,6 +714,15 @@ private fun SplitwiseMonthCard(
 
 // ── Category Breakdown ────────────────────────────────────────────────────────
 
+/**
+ * Converts Plaid's ALL-CAPS raw merchant names to title case.
+ * e.g. "AUTOMATIC PAYMENT - THANK" → "Automatic Payment - Thank"
+ */
+private fun String.toTitleCase(): String =
+    split(" ").joinToString(" ") { word ->
+        word.lowercase().replaceFirstChar { it.uppercaseChar() }
+    }
+
 /** Truncates long card names to a chip-friendly label, e.g. "Chase Sapphire Preferred" → "Sapphire". */
 private fun String.shortCardName(): String {
     val skipWords = setOf("card", "credit", "cash", "the", "bank", "of", "america", "rewards")
@@ -801,18 +815,18 @@ private fun CategoryBreakdownCard(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (breakdown.isNotEmpty()) {
-                        IconButton(
-                            onClick = onManage,
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Tune,
-                                contentDescription = "Manage transactions",
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    // Manage icon is always visible — an empty state with Manage mode active
+                    // is valid (user may want to set up category rules before transactions appear).
+                    IconButton(
+                        onClick = onManage,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Tune,
+                            contentDescription = "Manage transactions",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     // History sheet entry point — same visual weight as the Tune icon
                     IconButton(
@@ -1768,9 +1782,8 @@ private fun SpendingHistorySheet(
     selectedAccountNames: List<String>,
     currencyFmt: NumberFormat,
 ) {
-    // Dialog navigation state — local to this sheet, not in ViewModel.
-    // "category" | "merchant" | null
-    var filterDialogPage by rememberSaveable { mutableStateOf<String?>(null) }
+    // Single filter dialog — open/closed state only
+    var filterDialogOpen by rememberSaveable { mutableStateOf(false) }
 
     // Resolve colors in composable scope so we can pass them to Canvas helpers.
     val miscColor = MaterialTheme.colorScheme.outlineVariant
@@ -1780,37 +1793,32 @@ private fun SpendingHistorySheet(
         buildHistoryColorMap(allHistoryCategories, historySelectedCategories, palette, miscColor)
     }
 
-    // Filter dialogs
-    if (filterDialogPage == "category") {
-        HistoryCategoryFilterDialog(
+    // Badge counts for Fix 5
+    val totalCategoryCount = allHistoryCategories.size
+    val selectedCategoryCount = when {
+        historySelectedCategories == null -> totalCategoryCount  // all selected
+        else -> historySelectedCategories.size
+    }
+    val totalMerchantCount = topMerchantsForHistory.size
+    val selectedMerchantCount = when {
+        historySelectedMerchants == null -> totalMerchantCount  // all selected
+        else -> historySelectedMerchants.size
+    }
+    val categoryFiltered = historySelectedCategories != null && historySelectedCategories.size < totalCategoryCount
+    val merchantFiltered = historySelectedMerchants != null && historySelectedMerchants.size < totalMerchantCount
+
+    // Single unified filter dialog
+    if (filterDialogOpen) {
+        HistoryFilterDialog(
             allCategories = allHistoryCategories,
             selectedCategories = historySelectedCategories,
-            onConfirm = { selected ->
-                onSetHistoryCategoryFilter(selected)
-                filterDialogPage = null
-            },
-            onDismiss = { filterDialogPage = null },
-            onNavigateToMerchants = { filterDialogPage = "merchant" },
-        )
-    }
-    if (filterDialogPage == "merchant") {
-        HistoryMerchantFilterDialog(
             allMerchants = topMerchantsForHistory,
             selectedMerchants = historySelectedMerchants,
             historySelectedCategories = historySelectedCategories,
-            onConfirm = { selected ->
-                onSetHistoryMerchantFilter(selected)
-                filterDialogPage = null
-            },
-            onDismiss = { filterDialogPage = null },
-            onNavigateToCategories = { filterDialogPage = "category" },
+            onSetCategoryFilter = onSetHistoryCategoryFilter,
+            onSetMerchantFilter = onSetHistoryMerchantFilter,
+            onDismiss = { filterDialogOpen = false },
         )
-    }
-
-    // Build active filter summary for the label below the chart
-    val hasActiveFilters = historySelectedCategories != null || historySelectedMerchants != null
-    val filterSummaryText = remember(historySelectedCategories, historySelectedMerchants, allHistoryCategories, topMerchantsForHistory) {
-        buildFilterSummaryText(historySelectedCategories, historySelectedMerchants, allHistoryCategories, topMerchantsForHistory)
     }
 
     Column(
@@ -1841,12 +1849,40 @@ private fun SpendingHistorySheet(
                     )
                 }
             }
-            // Filter entry point — FilterList icon in trailing slot
-            IconButton(onClick = { filterDialogPage = "category" }) {
+            // Fix 5 — filter icon + count badges compound element
+            // Tapping the icon OR the badge row opens the unified filter dialog.
+            Row(
+                modifier = Modifier
+                    .clickable(onClickLabel = "Open filter") { filterDialogOpen = true }
+                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Icon(
                     imageVector = Icons.Outlined.FilterList,
                     contentDescription = "Filter spending history",
-                    tint = if (hasActiveFilters)
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+                // Category count badge
+                Text(
+                    text = "$selectedCategoryCount/$totalCategoryCount",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (categoryFiltered)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "·",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Merchant count badge
+                Text(
+                    text = "$selectedMerchantCount/$totalMerchantCount",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (merchantFiltered)
                         MaterialTheme.colorScheme.primary
                     else
                         MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1870,35 +1906,19 @@ private fun SpendingHistorySheet(
                 currencyFmt = currencyFmt,
             )
 
-            // ── Active filter summary label + Clear inline ──────────────────
-            AnimatedVisibility(
-                visible = hasActiveFilters,
-                enter = fadeIn() + slideInVertically(),
-                exit = fadeOut() + slideOutVertically(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = filterSummaryText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = onClearHistoryFilters,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = "Clear",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                }
-            }
+            Spacer(Modifier.height(8.dp))
+
+            // Legend: color dot + category name for every key in colorMap that has
+            // non-zero spend in the currently visible data. "Misc" always last.
+            HistoryChartLegend(
+                colorMap = colorMap,
+                allHistoryCategories = allHistoryCategories,
+                historySelectedCategories = historySelectedCategories,
+                historySelectedMerchants = historySelectedMerchants,
+                topMerchantsForHistory = topMerchantsForHistory,
+            )
+
+            // Filter summary text removed — header badges replace it.
         } else {
             // Empty state when no history loaded yet
             Box(
@@ -1959,8 +1979,8 @@ private fun HistoryStackedBarChart(
 
     val totalCanvasWidthDp = yAxisWidthDp + (barWidthDp + gapDp) * orderedHistory.size + gapDp
 
-    // Max total across all months — determines Y-axis scale.
-    val maxMonthTotal = remember(orderedHistory, historySelectedCategories, historySelectedMerchants) {
+    // Max total across all months — raw data maximum.
+    val rawMaxMonthTotal = remember(orderedHistory, historySelectedCategories, historySelectedMerchants) {
         orderedHistory.maxOfOrNull { month ->
             val merchantHistory = merchantHistoryByMonth[month.month]
             val segs = buildBarSegments(
@@ -1971,8 +1991,11 @@ private fun HistoryStackedBarChart(
         } ?: 1.0
     }
 
-    // Gridline values: 3–4 nice round levels from 0 to maxMonthTotal
-    val gridValues = remember(maxMonthTotal) { buildGridValues(maxMonthTotal) }
+    // 5 evenly spaced gridline values; the 5th tick is always above rawMaxMonthTotal.
+    val gridValues = remember(rawMaxMonthTotal) { buildGridValues(rawMaxMonthTotal) }
+
+    // Scale all bars to the top tick so no bar ever clips the chart ceiling.
+    val maxMonthTotal = gridValues.last()
 
     // Tooltip state — local rememberSaveable; NOT in ViewModel
     var tooltipBarIndex by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -2033,7 +2056,10 @@ private fun HistoryStackedBarChart(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = yAxisWidthDp)
-                .horizontalScroll(scrollState),
+                .horizontalScroll(scrollState)
+                .pointerInput(Unit) {
+                    detectTapGestures { tooltipBarIndex = null }
+                },
         ) {
             Box(modifier = Modifier.width(totalCanvasWidthDp - yAxisWidthDp)) {
                 Canvas(
@@ -2042,14 +2068,24 @@ private fun HistoryStackedBarChart(
                         .height(chartHeightDp + 20.dp) // extra for month labels
                         .pointerInput(orderedHistory, historySelectedCategories, historySelectedMerchants) {
                             detectTapGestures { offset ->
+                                // Only the canvas itself handles taps so we can check bar rects here.
+                                // Tapping within the chart area but outside any bar rect clears the tooltip.
+                                if (offset.y > chartHeightPx) {
+                                    // Tap landed on the month-label strip — dismiss tooltip
+                                    tooltipBarIndex = null
+                                    return@detectTapGestures
+                                }
                                 val xStart = gapPx
                                 val tappedIndex = ((offset.x - xStart) / (barWidthPx + gapPx))
                                     .toInt()
                                     .coerceIn(0, orderedHistory.size - 1)
-                                // Only register tap if within a bar, not the gap
                                 val barLeft = xStart + tappedIndex * (barWidthPx + gapPx)
                                 if (offset.x >= barLeft && offset.x <= barLeft + barWidthPx) {
+                                    // Tap is on a bar — toggle tooltip for that bar
                                     tooltipBarIndex = if (tooltipBarIndex == tappedIndex) null else tappedIndex
+                                } else {
+                                    // Tap landed in a gap between bars — dismiss tooltip
+                                    tooltipBarIndex = null
                                 }
                             }
                         },
@@ -2163,7 +2199,9 @@ private fun HistoryStackedBarChart(
                                             )
                                             Spacer(Modifier.width(6.dp))
                                             Text(
-                                                text = seg.label,
+                                                // toTitleCase handles Plaid's ALL-CAPS merchant names;
+                                                // category labels are already properly cased so it's a no-op for them.
+                                                text = seg.label.toTitleCase(),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 modifier = Modifier.weight(1f),
@@ -2207,22 +2245,104 @@ private fun HistoryStackedBarChart(
     }
 }
 
-/** Builds 3–4 round gridline values scaled to the max month total. */
+/**
+ * Wrapping legend row showing color dot + label for each category (or merchant) visible
+ * in the chart. Only entries with non-zero spend in the selected data are shown.
+ * "Misc" always appears last in [miscColor] = outlineVariant.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HistoryChartLegend(
+    colorMap: Map<String, Color>,
+    allHistoryCategories: List<CategoryAmount>,
+    historySelectedCategories: Set<String>?,
+    historySelectedMerchants: Set<String>?,
+    topMerchantsForHistory: List<MerchantSpendSummary>,
+) {
+    // In merchant-filter mode the legend shows merchants; otherwise categories.
+    // Build a list of (label, color) pairs in chart draw order.
+    val entries: List<Pair<String, Color>> = if (historySelectedMerchants != null) {
+        topMerchantsForHistory
+            .filter { it.merchantName in historySelectedMerchants }
+            .mapIndexed { i, m ->
+                m.merchantName.toTitleCase() to historyBarPalette[i % historyBarPalette.size]
+            }
+    } else {
+        // Category mode: show top-5 from colorMap (insertion order = palette assignment order),
+        // then Misc if it exists.
+        val categoryEntries = allHistoryCategories
+            .filter { cat ->
+                val isSelected = historySelectedCategories == null ||
+                    cat.effectiveCategory in historySelectedCategories
+                isSelected && cat.effectiveCategory in colorMap
+            }
+            .take(5)
+            .map { cat ->
+                CategoryMeta.get(cat.effectiveCategory).displayName to
+                    colorMap[cat.effectiveCategory]!!
+            }
+        val miscEntry = if (colorMap.containsKey("Misc")) listOf("Misc" to colorMap["Misc"]!!) else emptyList()
+        categoryEntries + miscEntry
+    }
+
+    if (entries.isEmpty()) return
+
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        // 8dp horizontal between legend chips, 4dp vertical when wrapping to next line.
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        entries.forEach { (label, color) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Canvas(modifier = Modifier.size(8.dp)) {
+                    drawCircle(color = color)
+                }
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Rounds [rawMax] up to the next "nice" round-number ceiling — 1, 2, 5, or 10 × 10^N.
+ * Ensures the chart's top tick is always ≥ the tallest bar so bars never clip.
+ * Examples:
+ *   rawMax = 3,241  → niceMax = 5,000
+ *   rawMax = 850    → niceMax = 1,000
+ *   rawMax = 12,000 → niceMax = 20,000
+ */
+private fun niceMax(rawMax: Double): Double {
+    if (rawMax <= 0) return 1000.0
+    val magnitude = 10.0.pow(floor(log10(rawMax)))
+    val normalized = rawMax / magnitude
+    val nice = when {
+        normalized <= 1.0 -> 1.0
+        normalized <= 2.0 -> 2.0
+        normalized <= 5.0 -> 5.0
+        else -> 10.0
+    }
+    return nice * magnitude
+}
+
+/**
+ * Builds exactly 5 evenly spaced gridline values from $0 to [niceMax] of [maxTotal].
+ *
+ * Returns ticks at 0%, 25%, 50%, 75%, 100% of niceMax. The top tick is always
+ * ≥ the tallest bar, so no bar ever clips the chart ceiling.
+ */
 private fun buildGridValues(maxTotal: Double): List<Double> {
-    if (maxTotal <= 0.0) return listOf(0.0)
-    val magnitude = Math.pow(10.0, Math.floor(Math.log10(maxTotal)))
-    val step = when {
-        maxTotal / magnitude <= 2 -> magnitude / 4
-        maxTotal / magnitude <= 5 -> magnitude / 2
-        else -> magnitude
-    }
-    val values = mutableListOf<Double>()
-    var v = step
-    while (v <= maxTotal && values.size < 4) {
-        values.add(v)
-        v += step
-    }
-    return values.ifEmpty { listOf(maxTotal) }
+    val ceiling = niceMax(maxTotal)
+    return listOf(0.0, 0.25, 0.5, 0.75, 1.0).map { it * ceiling }
 }
 
 /** Formats a Y-axis dollar value as "$1k", "$2.5k", "$10k", etc. */
@@ -2236,299 +2356,264 @@ private fun formatYLabel(value: Double): String {
     }
 }
 
-/** Builds the compact filter summary string shown below the chart. */
-private fun buildFilterSummaryText(
-    selectedCategories: Set<String>?,
-    selectedMerchants: Set<String>?,
-    allCategories: List<CategoryAmount>,
-    allMerchants: List<MerchantSpendSummary>,
-): String {
-    val parts = mutableListOf<String>()
+// ── Unified History Filter Dialog (Fixes 2, 3, 4) ────────────────────────────
+//
+// Single dialog with a SingleChoiceSegmentedButtonRow at the top toggling between
+// "Categories" and "Merchants" tabs. Both tabs share HistoryFilterTabContent which
+// renders a "Select all" first row, a search field, and a scrollable item list
+// sorted by 12-month spend descending. Changes are applied to the ViewModel
+// immediately on every tap — no local staging, no Done/Cancel buttons.
 
-    if (selectedCategories != null) {
-        val sorted = allCategories
-            .filter { it.effectiveCategory in selectedCategories }
-            .map { CategoryMeta.get(it.effectiveCategory).displayName }
-        when {
-            sorted.isEmpty() -> parts.add("No categories")
-            sorted.size <= 2 -> parts.add(sorted.joinToString(", "))
-            else -> parts.add("${sorted.take(2).joinToString(", ")} +${sorted.size - 2}")
-        }
-    }
-
-    if (selectedMerchants != null) {
-        val sorted = allMerchants
-            .filter { it.merchantName in selectedMerchants }
-            .map { it.merchantName }
-        when {
-            sorted.isEmpty() -> parts.add("No merchants")
-            sorted.size <= 2 -> parts.add(sorted.joinToString(", "))
-            else -> parts.add("${sorted.take(2).joinToString(", ")} +${sorted.size - 2}")
-        }
-    }
-
-    return parts.joinToString(" · ").ifEmpty { "" }
-}
-
-// ── History Category Filter Dialog ────────────────────────────────────────────
-
-@Composable
-private fun HistoryCategoryFilterDialog(
-    allCategories: List<CategoryAmount>,
-    selectedCategories: Set<String>?,
-    onConfirm: (Set<String>?) -> Unit,
-    onDismiss: () -> Unit,
-    onNavigateToMerchants: () -> Unit,
-) {
-    // Dialog-local checked state: initialize from external state.
-    // null selectedCategories (all) → all boxes checked
-    val allKeys = remember(allCategories) { allCategories.map { it.effectiveCategory }.toSet() }
-    var checkedKeys by remember(selectedCategories, allKeys) {
-        mutableStateOf(selectedCategories ?: allKeys)
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Categories",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = { checkedKeys = allKeys },
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                ) { Text("Select All", style = MaterialTheme.typography.labelMedium) }
-                TextButton(
-                    onClick = { checkedKeys = emptySet() },
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                ) { Text("Clear All", style = MaterialTheme.typography.labelMedium) }
-            }
-        },
-        text = {
-            Column {
-                LazyColumn(
-                    modifier = Modifier.requiredWidthIn(min = 280.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    items(allCategories, key = { it.effectiveCategory }) { cat ->
-                        val meta = CategoryMeta.get(cat.effectiveCategory)
-                        val checked = cat.effectiveCategory in checkedKeys
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    checkedKeys = if (checked)
-                                        checkedKeys - cat.effectiveCategory
-                                    else
-                                        checkedKeys + cat.effectiveCategory
-                                }
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                checked = checked,
-                                onCheckedChange = {
-                                    checkedKeys = if (it)
-                                        checkedKeys + cat.effectiveCategory
-                                    else
-                                        checkedKeys - cat.effectiveCategory
-                                },
-                                modifier = Modifier.size(40.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = meta.emoji,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.width(24.dp),
-                            )
-                            Text(
-                                text = meta.displayName,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                    // Merchants navigation button at bottom of list
-                    item {
-                        Spacer(Modifier.height(8.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Spacer(Modifier.height(4.dp))
-                        TextButton(
-                            onClick = {
-                                // Apply current category selection first, then navigate
-                                val result = if (checkedKeys == allKeys) null
-                                    else if (checkedKeys.isEmpty()) emptySet()
-                                    else checkedKeys
-                                onConfirm(result)
-                                onNavigateToMerchants()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = "Merchants →",
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                // null = all selected (boxes match the full set); emptySet = explicit clear
-                val result = when {
-                    checkedKeys == allKeys -> null
-                    checkedKeys.isEmpty() -> emptySet()
-                    else -> checkedKeys
-                }
-                onConfirm(result)
-            }) { Text("Apply") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
-}
-
-// ── History Merchant Filter Dialog ────────────────────────────────────────────
-
+// Fix 3: ModalBottomSheet replaces AlertDialog for the history filter.
+// Fix 1: No title Text above the segmented button — the segmented button is self-explanatory.
+// Fix 4: Plain if/else replaces AnimatedContent — eliminates tab-switch LazyColumn recompose lag.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HistoryMerchantFilterDialog(
+private fun HistoryFilterDialog(
+    allCategories: List<CategoryAmount>,
+    selectedCategories: Set<String>?,
     allMerchants: List<MerchantSpendSummary>,
     selectedMerchants: Set<String>?,
     historySelectedCategories: Set<String>?,
-    onConfirm: (Set<String>?) -> Unit,
+    onSetCategoryFilter: (Set<String>?) -> Unit,
+    onSetMerchantFilter: (Set<String>?) -> Unit,
     onDismiss: () -> Unit,
-    onNavigateToCategories: () -> Unit,
 ) {
-    // Smart filtering: if category filter is active, only show merchants in those categories
+    // Segmented tab index: 0 = Categories, 1 = Merchants
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    val allCategoryKeys = remember(allCategories) {
+        allCategories.map { it.effectiveCategory }.toSet()
+    }
+
+    // Merchant smart-filter: always derived from live ViewModel category state.
+    // Categories commit immediately so historySelectedCategories is always current
+    // — switching tabs after ticking a category shows the correctly narrowed merchant list.
     val visibleMerchants = remember(allMerchants, historySelectedCategories) {
         if (historySelectedCategories == null) allMerchants
         else allMerchants.filter { it.primaryCategory in historySelectedCategories }
     }
-    val allKeys = remember(visibleMerchants) { visibleMerchants.map { it.merchantName }.toSet() }
-    var checkedKeys by remember(selectedMerchants, allKeys) {
-        mutableStateOf(selectedMerchants ?: allKeys)
-    }
-    var searchQuery by rememberSaveable { mutableStateOf("") }
-
-    val filteredMerchants = remember(visibleMerchants, searchQuery) {
-        if (searchQuery.isBlank()) visibleMerchants
-        else visibleMerchants.filter { it.merchantName.contains(searchQuery, ignoreCase = true) }
+    val allMerchantKeys = remember(visibleMerchants) {
+        visibleMerchants.map { it.merchantName }.toSet()
     }
 
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(
-                        onClick = onNavigateToCategories,
-                        contentPadding = PaddingValues(horizontal = 4.dp),
-                    ) { Text("← Categories", style = MaterialTheme.typography.labelMedium) }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(
-                        onClick = { checkedKeys = allKeys },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                    ) { Text("Select All", style = MaterialTheme.typography.labelMedium) }
-                    TextButton(
-                        onClick = { checkedKeys = emptySet() },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                    ) { Text("Clear All", style = MaterialTheme.typography.labelMedium) }
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search merchants") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Search,
-                            contentDescription = "Search",
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    trailingIcon = if (searchQuery.isNotEmpty()) {
-                        {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Clear search",
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        }
-                    } else null,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+        sheetState = sheetState,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.85f)
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Segmented button only — no title Text above it (the button is self-explanatory).
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    label = { Text("Categories") },
+                )
+                SegmentedButton(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    label = { Text("Merchants") },
                 )
             }
-        },
-        text = {
-            LazyColumn(
-                modifier = Modifier.requiredWidthIn(min = 280.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(filteredMerchants, key = { it.merchantName }) { merchant ->
-                    val checked = merchant.merchantName in checkedKeys
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                checkedKeys = if (checked)
-                                    checkedKeys - merchant.merchantName
-                                else
-                                    checkedKeys + merchant.merchantName
-                            }
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = checked,
-                            onCheckedChange = {
-                                checkedKeys = if (it)
-                                    checkedKeys + merchant.merchantName
-                                else
-                                    checkedKeys - merchant.merchantName
-                            },
-                            modifier = Modifier.size(40.dp),
+
+            // Plain if/else — no AnimatedContent, no CrossFade.
+            // The segmented button already signals the switch; a transition animation
+            // on top of it would cause a full LazyColumn recompose each time.
+            if (selectedTab == 0) {
+                val checkedKeys = selectedCategories ?: allCategoryKeys
+                HistoryFilterTabContent(
+                    items = allCategories.map { cat ->
+                        FilterItem(
+                            key = cat.effectiveCategory,
+                            label = CategoryMeta.get(cat.effectiveCategory).displayName,
+                            prefix = CategoryMeta.get(cat.effectiveCategory).emoji,
+                            totalAmount = cat.totalAmount,
                         )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = merchant.merchantName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
+                    },
+                    allKeys = allCategoryKeys,
+                    checkedKeys = checkedKeys,
+                    onSetFilter = { newSet ->
+                        // Normalise: full set → null (no filter), otherwise pass through
+                        onSetCategoryFilter(
+                            if (newSet == allCategoryKeys) null else newSet
+                        )
+                    },
+                )
+            } else {
+                val checkedKeys = selectedMerchants ?: allMerchantKeys
+                HistoryFilterTabContent(
+                    items = visibleMerchants.map { m ->
+                        FilterItem(
+                            key = m.merchantName,
+                            label = m.merchantName.toTitleCase(),
+                            prefix = null,
+                            totalAmount = m.totalAmount,
+                        )
+                    },
+                    allKeys = allMerchantKeys,
+                    checkedKeys = checkedKeys,
+                    onSetFilter = { newSet ->
+                        onSetMerchantFilter(
+                            if (newSet == allMerchantKeys) null else newSet
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Lightweight data holder for a single filter item in the unified tab. */
+private data class FilterItem(
+    val key: String,
+    val label: String,
+    val prefix: String?,       // emoji or null
+    val totalAmount: Double,
+)
+
+/**
+ * Shared tab content used by both Categories and Merchants tabs.
+ *
+ * Items are pre-sorted by 12-month spend descending (caller provides them sorted).
+ * Search field is always visible. "Select all" is always the first list row.
+ * [onSetFilter] receives the complete new desired set — the caller normalises
+ * all-selected to null before forwarding to the ViewModel.
+ */
+@Composable
+private fun HistoryFilterTabContent(
+    items: List<FilterItem>,
+    allKeys: Set<String>,
+    checkedKeys: Set<String>,
+    onSetFilter: (Set<String>) -> Unit,
+) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    val filteredItems = remember(items, searchQuery) {
+        if (searchQuery.isBlank()) items
+        else items.filter { it.label.contains(searchQuery, ignoreCase = true) }
+    }
+
+    Column(modifier = Modifier.requiredWidthIn(min = 280.dp)) {
+        // Search bar — always visible (both tabs)
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search…") },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Outlined.Search,
+                    contentDescription = "Search",
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+            trailingIcon = if (searchQuery.isNotEmpty()) {
+                {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Clear search",
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                val result = when {
-                    checkedKeys == allKeys -> null
-                    checkedKeys.isEmpty() -> emptySet()
-                    else -> checkedKeys
+            } else null,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            // "Select all" row — always first, not filtered by search
+            item(key = "__select_all__") {
+                val triState = when {
+                    checkedKeys == allKeys -> ToggleableState.On
+                    checkedKeys.isEmpty() -> ToggleableState.Off
+                    else -> ToggleableState.Indeterminate
                 }
-                onConfirm(result)
-            }) { Text("Apply") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            // On → clear all; Off/Indeterminate → select all
+                            if (triState == ToggleableState.On) onSetFilter(emptySet())
+                            else onSetFilter(allKeys)
+                        }
+                        .padding(horizontal = 0.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TriStateCheckbox(
+                        state = triState,
+                        onClick = {
+                            if (triState == ToggleableState.On) onSetFilter(emptySet())
+                            else onSetFilter(allKeys)
+                        },
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = "Select all",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+
+            items(filteredItems, key = { it.key }) { item ->
+                val checked = item.key in checkedKeys
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val newSet = if (checked) checkedKeys - item.key else checkedKeys + item.key
+                            onSetFilter(newSet)
+                        }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        onCheckedChange = { ticked ->
+                            val newSet = if (ticked) checkedKeys + item.key else checkedKeys - item.key
+                            onSetFilter(newSet)
+                        },
+                        modifier = Modifier.size(40.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    if (item.prefix != null) {
+                        Text(
+                            text = item.prefix,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.width(24.dp),
+                        )
+                    }
+                    Text(
+                        text = item.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
 }
 
 // ── Shared labeled amount ─────────────────────────────────────────────────────

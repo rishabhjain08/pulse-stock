@@ -368,6 +368,18 @@ cd infra && npm run destroy
 
 Deletes both CloudFormation stacks and all `/poarvault/*` SSM parameters. The S3 artifact bucket is **retained** (by `DeletionPolicy: Retain` in the bootstrap template) so your Lambda zip history isn't accidentally destroyed. To fully clean up, empty and delete the bucket manually after running destroy.
 
+### Updating credentials (Plaid or Splitwise)
+
+When you rotate your Plaid or Splitwise credentials, update `infra/.env` with the new values, then push them to SSM in one command — no redeployment needed:
+
+```bash
+cd infra && node scripts/update-secrets.js           # update all credentials
+cd infra && node scripts/update-secrets.js splitwise # update only Splitwise key + secret
+cd infra && node scripts/update-secrets.js plaid     # update only Plaid credentials
+```
+
+The Lambda reads SSM on every invocation, so the new values take effect immediately on the next API call. Also update the corresponding GitHub Actions secrets and `local.properties` to keep everything in sync.
+
 ### Rotating the API key
 
 Run this any time the `POARVAULT_API_KEY` may have been exposed (e.g., accidentally committed to git):
@@ -382,11 +394,10 @@ The script:
 3. Touches each Lambda function's configuration to force cold starts — this flushes the module-level SSM cache in `shared.js` so the old key is no longer accepted immediately
 4. Prints the new key — copy it to `local.properties` as `POARVAULT_API_KEY`
 
-Requires `infra/.env` to be present with valid AWS credentials and `aws` CLI installed.
-
 **If credentials were committed to a public repo**, also:
 - Rotate `PLAID_SECRET` in the Plaid dashboard
 - Rotate `SPLITWISE_CONSUMER_SECRET` at `https://secure.splitwise.com/oauth_clients`
+- Then run `node infra/scripts/update-secrets.js` to push the new values to SSM
 - Rotate `FINNHUB_API_KEY` at `https://finnhub.io/dashboard`
 - Rotate the AWS IAM user's access keys in the IAM console
 - Clean git history with `git filter-repo --path <file> --invert-paths`, then force-push

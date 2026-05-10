@@ -1,5 +1,6 @@
 package com.pulsestock.app.data.poarvault
 
+import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
@@ -63,7 +64,16 @@ class PoarVaultRepository(
         val token = tokens.getAccessToken(institutionId) ?: return
         runCatching { api.disconnect(token) }
         tokens.removeAccessToken(institutionId)
-        db.dao().deleteInstitution(institutionId)
+        db.withTransaction {
+            // Collect account IDs before cascade-deleting the institution so we can
+            // wipe tables that have no FK relationship to institutions.
+            val accountIds = db.dao().accountIdsForInstitution(institutionId)
+            if (accountIds.isNotEmpty()) {
+                db.dao().deleteTransactionsByAccounts(accountIds)
+                db.dao().deleteSnapshotsByAccounts(accountIds)
+            }
+            db.dao().deleteInstitution(institutionId) // cascades → accounts
+        }
     }
 
     suspend fun refreshInstitution(institutionId: String) {

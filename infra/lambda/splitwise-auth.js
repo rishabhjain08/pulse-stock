@@ -37,21 +37,22 @@ exports.handler = async (event) => {
   if (!code) return json(400, { error: 'code required' });
 
   try {
+    const params = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: config.consumerKey,
+      client_secret: config.consumerSecret,
+      code,
+      redirect_uri: 'pulsestock://splitwise/callback',
+    });
     const resp = await fetch('https://secure.splitwise.com/oauth/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        client_id: config.consumerKey,
-        client_secret: config.consumerSecret,
-        code,
-        redirect_uri: 'pulsestock://splitwise/callback',
-      }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
     });
 
     if (!resp.ok) {
-      // Do not log the response body — it may contain partial token info
-      console.error('splitwise token exchange failed, status:', resp.status);
+      const errBody = await resp.text().catch(() => '<unreadable>');
+      console.error('splitwise token exchange failed, status:', resp.status, 'body:', errBody);
       return json(502, { error: 'Token exchange failed' });
     }
 

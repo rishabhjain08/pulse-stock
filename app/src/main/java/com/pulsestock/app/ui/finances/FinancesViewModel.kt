@@ -313,8 +313,9 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value = _uiState.value.copy(balanceSnapshotsByMonth = byMonth)
                 }
         }
-        // Spending history — re-queries whenever selected accounts change.
-        // A single fetch populates category history, merchant history, and the filter lists.
+        // Spending history — re-queries whenever the effective spending account selection changes.
+        // Uses effectiveSpendingAccounts (same derivation as the spending card) so the chart
+        // always reflects exactly the accounts the user has selected, not all credit accounts.
         viewModelScope.launch {
             _uiState
                 .map { it.effectiveSpendingAccounts.map { a -> a.accountId } }
@@ -326,8 +327,12 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                         PulseLog.w("FinancesVM", "getMonthlySpendingHistory failed: ${e.message}")
                         Pair(emptyList(), emptyList())
                     }
+                    // rawTxns already scoped to accountIds by getMonthlySpendingHistoryWithRaw.
+                    // Filter defensively here as well so history never bleeds in unselected accounts.
+                    val filteredTxns = if (accountIds.isEmpty()) emptyList()
+                        else rawTxns.filter { it.accountId in accountIds }
                     val history = aggregateSpendingHistory(categoryRows)
-                    val (merchantHistory, merchantSummaries) = aggregateMerchantHistory(rawTxns)
+                    val (merchantHistory, merchantSummaries) = aggregateMerchantHistory(filteredTxns)
                     val allCategories = aggregateAllHistoryCategories(categoryRows)
                     _uiState.value = _uiState.value.copy(
                         spendingHistoryByMonth = history,
