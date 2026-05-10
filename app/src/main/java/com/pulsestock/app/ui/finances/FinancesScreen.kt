@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateContentSize
@@ -16,8 +17,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,9 +104,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.draw.clip
@@ -115,6 +120,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
@@ -1672,6 +1678,13 @@ private val historyBarPalette = listOf(
 // Short month label formatter, e.g. "Apr 25"
 private val barMonthFmt = DateTimeFormatter.ofPattern("MMM yy")
 
+private fun last12MonthSlots(): List<String> {
+    val result = mutableListOf<String>()
+    val now = java.time.YearMonth.now()
+    for (i in 11 downTo 0) result.add(now.minusMonths(i.toLong()).toString())
+    return result
+}
+
 /**
  * Builds the color-assignment map for the chart.
  *
@@ -1847,7 +1860,7 @@ private fun SpendingHistorySheet(
                     .joinToString(", ") { it.shortCardName() }
                     .ifEmpty { "All cards" }
                 Text(
-                    text = "${spendingWindow.label} · $cardLabel · Last 12 months",
+                    text = "${spendingWindow.label} · $cardLabel",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1940,16 +1953,6 @@ private fun SpendingHistorySheet(
     }
 }
 
-/**
- * Horizontally scrollable stacked bar chart.
- *
- * Bars are 48dp wide with 10dp gaps. Canvas height is 160dp.
- * Y-axis labels ($1k, $2k, ...) drawn on the left side, scaled to max month total.
- * Gridlines at each Y label.
- * Pre-scrolled to the rightmost (newest) month on first composition.
- *
- * Tapping a bar shows an [AnimatedVisibility] tooltip above the tapped bar.
- */
 @Composable
 private fun HistoryStackedBarChart(
     spendingHistoryByMonth: List<MonthlySpendingHistory>,
@@ -1962,81 +1965,79 @@ private fun HistoryStackedBarChart(
     miscColor: Color,
     currencyFmt: NumberFormat,
 ) {
-    // Bar chart is ordered oldest→newest (left→right). History comes newest-first so reverse it.
-    val orderedHistory = remember(spendingHistoryByMonth) { spendingHistoryByMonth.reversed() }
-    val orderedMerchantHistory = remember(spendingHistoryByMonthAndMerchant) {
-        spendingHistoryByMonthAndMerchant.reversed()
+    val monthSlots = remember { last12MonthSlots() }
+
+    val dataByMonth = remember(spendingHistoryByMonth) {
+        spendingHistoryByMonth.associateBy { it.month.toString() }
     }
-    val merchantHistoryByMonth = remember(orderedMerchantHistory) {
-        orderedMerchantHistory.associateBy { it.month }
+    val merchantDataByMonth = remember(spendingHistoryByMonthAndMerchant) {
+        spendingHistoryByMonthAndMerchant.associateBy { it.month.toString() }
     }
 
     val density = LocalDensity.current
-    val barWidthDp = 48.dp
-    val gapDp = 10.dp
+    val barSlotDp = 36.dp
+    val barWidthDp = 24.dp
     val chartHeightDp = 160.dp
     val yAxisWidthDp = 44.dp
+    val barSlotPx = with(density) { barSlotDp.toPx() }
     val barWidthPx = with(density) { barWidthDp.toPx() }
-    val gapPx = with(density) { gapDp.toPx() }
     val chartHeightPx = with(density) { chartHeightDp.toPx() }
+    val totalContentWidthPx = barSlotPx * 12
 
-    val totalCanvasWidthDp = yAxisWidthDp + (barWidthDp + gapDp) * orderedHistory.size + gapDp
-
-    // Max total across all months — raw data maximum.
-    val rawMaxMonthTotal = remember(orderedHistory, historySelectedCategories, historySelectedMerchants) {
-        orderedHistory.maxOfOrNull { month ->
-            val merchantHistory = merchantHistoryByMonth[month.month]
+    val rawMaxMonthTotal = remember(monthSlots, dataByMonth, merchantDataByMonth, historySelectedCategories, historySelectedMerchants) {
+        monthSlots.maxOfOrNull { slot ->
+            val monthData = dataByMonth[slot] ?: return@maxOfOrNull 0.0
+            val merchantData = merchantDataByMonth[slot]
             val segs = buildBarSegments(
-                month, merchantHistory, historySelectedCategories, historySelectedMerchants,
+                monthData, merchantData, historySelectedCategories, historySelectedMerchants,
                 colorMap, miscColor, allHistoryCategories, palette,
             )
             segs.sumOf { it.amount }
         } ?: 1.0
     }
 
-    // 5 evenly spaced gridline values; the 5th tick is always above rawMaxMonthTotal.
     val gridValues = remember(rawMaxMonthTotal) { buildGridValues(rawMaxMonthTotal) }
-
-    // Scale all bars to the top tick so no bar ever clips the chart ceiling.
     val maxMonthTotal = gridValues.last()
 
-    // Tooltip state — local rememberSaveable; NOT in ViewModel
     var tooltipBarIndex by rememberSaveable { mutableStateOf<Int?>(null) }
 
-    // Scroll state — pre-scroll to rightmost bar on first composition
-    val scrollState = rememberScrollState()
-    LaunchedEffect(orderedHistory.size) {
-        if (orderedHistory.isNotEmpty()) {
-            scrollState.scrollTo(scrollState.maxValue)
+    val panOffset = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val decay = rememberSplineBasedDecay<Float>()
+    var canvasWidthPx by remember { mutableStateOf(0f) }
+
+    fun clampOffset(offset: Float, width: Float): Float =
+        offset.coerceIn(-(totalContentWidthPx - width).coerceAtLeast(0f), 0f)
+
+    LaunchedEffect(canvasWidthPx) {
+        if (canvasWidthPx > 0f) {
+            panOffset.snapTo(clampOffset(-(totalContentWidthPx - canvasWidthPx), canvasWidthPx))
         }
     }
 
-    // Resolve text colors in composable scope for use inside Canvas
+    val velocityTracker = remember { VelocityTracker() }
+
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val gridlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
     val onSurfaceColor = MaterialTheme.colorScheme.onSurface
-    val surfaceContainerHighest = MaterialTheme.colorScheme.surfaceContainerHighest
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        // Fixed Y-axis labels drawn in a separate Box so they stay visible during scroll
         Box(
             modifier = Modifier
                 .width(yAxisWidthDp)
-                .height(chartHeightDp + 20.dp) // +20dp for month labels area
+                .height(chartHeightDp + 20.dp)
                 .align(Alignment.TopStart),
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val chartH = chartHeightPx
                 gridValues.forEach { value ->
                     val y = chartH - (value / maxMonthTotal * chartH).toFloat()
-                    // Gridline stub on Y-axis side
                     drawLine(
                         color = gridlineColor,
                         start = Offset(size.width - 4.dp.toPx(), y),
                         end = Offset(size.width, y),
                         strokeWidth = 1.dp.toPx(),
                     )
-                    // Y-label text using nativeCanvas for precise positioning
                     val label = formatYLabel(value)
                     val paint = android.graphics.Paint().apply {
                         color = labelColor.toArgb()
@@ -2054,68 +2055,84 @@ private fun HistoryStackedBarChart(
             }
         }
 
-        // Scrollable chart area — starts to the right of the Y-axis
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = yAxisWidthDp)
-                .horizontalScroll(scrollState)
-                .pointerInput(Unit) {
-                    detectTapGestures { tooltipBarIndex = null }
-                },
-        ) {
-            Box(modifier = Modifier.width(totalCanvasWidthDp - yAxisWidthDp)) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(chartHeightDp + 20.dp) // extra for month labels
-                        .pointerInput(orderedHistory, historySelectedCategories, historySelectedMerchants) {
-                            detectTapGestures { offset ->
-                                // Only the canvas itself handles taps so we can check bar rects here.
-                                // Tapping within the chart area but outside any bar rect clears the tooltip.
-                                if (offset.y > chartHeightPx) {
-                                    // Tap landed on the month-label strip — dismiss tooltip
-                                    tooltipBarIndex = null
-                                    return@detectTapGestures
-                                }
-                                val xStart = gapPx
-                                val tappedIndex = ((offset.x - xStart) / (barWidthPx + gapPx))
-                                    .toInt()
-                                    .coerceIn(0, orderedHistory.size - 1)
-                                val barLeft = xStart + tappedIndex * (barWidthPx + gapPx)
-                                if (offset.x >= barLeft && offset.x <= barLeft + barWidthPx) {
-                                    // Tap is on a bar — toggle tooltip for that bar
+                .height(chartHeightDp + 20.dp)
+                .pointerInput(monthSlots, historySelectedCategories, historySelectedMerchants) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        velocityTracker.resetTracking()
+                        velocityTracker.addPosition(down.uptimeMillis, down.position)
+                        var dragOccurred = false
+                        drag(down.id) { change ->
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            val delta = change.position.x - change.previousPosition.x
+                            if (kotlin.math.abs(delta) > 0f) dragOccurred = true
+                            val newOff = clampOffset(panOffset.value + delta, canvasWidthPx)
+                            scope.launch { panOffset.snapTo(newOff) }
+                            change.consume()
+                        }
+                        if (!dragOccurred) {
+                            val tapX = down.position.x
+                            val tapY = down.position.y
+                            if (tapY <= chartHeightPx) {
+                                val startPadding = barSlotPx - barWidthPx
+                                val rawIndex = ((tapX - startPadding - panOffset.value) / barSlotPx).toInt()
+                                val tappedIndex = rawIndex.coerceIn(0, 11)
+                                val barLeft = tappedIndex * barSlotPx + panOffset.value + startPadding
+                                if (tapX >= barLeft && tapX <= barLeft + barWidthPx) {
                                     tooltipBarIndex = if (tooltipBarIndex == tappedIndex) null else tappedIndex
                                 } else {
-                                    // Tap landed in a gap between bars — dismiss tooltip
                                     tooltipBarIndex = null
                                 }
+                            } else {
+                                tooltipBarIndex = null
                             }
-                        },
-                ) {
-                    val chartH = chartHeightPx
-
-                    // Draw horizontal gridlines across the full canvas width
-                    gridValues.forEach { value ->
-                        val y = chartH - (value / maxMonthTotal * chartH).toFloat()
-                        drawLine(
-                            color = gridlineColor,
-                            start = Offset(0f, y),
-                            end = Offset(size.width, y),
-                            strokeWidth = 1.dp.toPx(),
-                        )
+                        } else {
+                            val velocity = velocityTracker.calculateVelocity().x
+                            scope.launch {
+                                panOffset.animateDecay(velocity, decay)
+                                panOffset.snapTo(clampOffset(panOffset.value, canvasWidthPx))
+                            }
+                        }
                     }
+                },
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { canvasWidthPx = it.width.toFloat() },
+            ) {
+                val chartH = chartHeightPx
+                val startPadding = barSlotPx - barWidthPx
 
-                    // Draw bars
-                    orderedHistory.forEachIndexed { index, monthHistory ->
-                        val merchantHistory = merchantHistoryByMonth[monthHistory.month]
+                gridValues.forEach { value ->
+                    val y = chartH - (value / maxMonthTotal * chartH).toFloat()
+                    drawLine(
+                        color = gridlineColor,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+
+                monthSlots.forEachIndexed { index, slot ->
+                    val barLeft = index * barSlotPx + panOffset.value + startPadding
+                    val barRight = barLeft + barWidthPx
+
+                    if (barRight < 0f || barLeft > size.width) return@forEachIndexed
+
+                    val monthData = dataByMonth[slot]
+                    if (monthData != null) {
+                        val merchantData = merchantDataByMonth[slot]
                         val segments = buildBarSegments(
-                            monthHistory, merchantHistory,
+                            monthData, merchantData,
                             historySelectedCategories, historySelectedMerchants,
                             colorMap, miscColor, allHistoryCategories, palette,
                         )
                         val totalHeight = segments.sumOf { it.amount }
-                        val barLeft = gapPx + index * (barWidthPx + gapPx)
                         var currentY = chartH
 
                         segments.forEach { seg ->
@@ -2131,37 +2148,39 @@ private fun HistoryStackedBarChart(
                             )
                             currentY = segTop
                         }
-
-                        // Month label below the bar
-                        val label = monthHistory.month.format(barMonthFmt)
-                        val labelPaint = android.graphics.Paint().apply {
-                            color = onSurfaceColor.toArgb()
-                            textSize = 9.dp.toPx()
-                            textAlign = android.graphics.Paint.Align.CENTER
-                            isAntiAlias = true
-                        }
-                        drawContext.canvas.nativeCanvas.drawText(
-                            label,
-                            barLeft + barWidthPx / 2f,
-                            chartH + 14.dp.toPx(),
-                            labelPaint,
-                        )
                     }
-                }
 
-                // Tooltip overlay — rendered as a Compose Surface above the canvas
-                tooltipBarIndex?.let { idx ->
-                    if (idx in orderedHistory.indices) {
-                        val monthHistory = orderedHistory[idx]
-                        val merchantHistory = merchantHistoryByMonth[monthHistory.month]
+                    val yearMonth = java.time.YearMonth.parse(slot)
+                    val label = yearMonth.format(barMonthFmt)
+                    val labelPaint = android.graphics.Paint().apply {
+                        color = onSurfaceColor.toArgb()
+                        textSize = 9.dp.toPx()
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                    }
+                    drawContext.canvas.nativeCanvas.drawText(
+                        label,
+                        barLeft + barWidthPx / 2f,
+                        chartH + 14.dp.toPx(),
+                        labelPaint,
+                    )
+                }
+            }
+
+            tooltipBarIndex?.let { idx ->
+                if (idx in 0..11) {
+                    val slot = monthSlots[idx]
+                    val monthData = dataByMonth[slot]
+                    if (monthData != null) {
+                        val merchantData = merchantDataByMonth[slot]
                         val segments = buildBarSegments(
-                            monthHistory, merchantHistory,
+                            monthData, merchantData,
                             historySelectedCategories, historySelectedMerchants,
                             colorMap, miscColor, allHistoryCategories, palette,
                         )
-                        // Position tooltip above the tapped bar
-                        val barLeftDp = gapDp + (barWidthDp + gapDp) * idx
                         val tooltipTotal = segments.sumOf { it.amount }
+                        val startPaddingDp = barSlotDp - barWidthDp
+                        val barLeftDp = with(density) { (idx * barSlotPx + panOffset.value + startPaddingDp.toPx()).toDp() }
 
                         AnimatedVisibility(
                             visible = true,
@@ -2181,7 +2200,7 @@ private fun HistoryStackedBarChart(
                             ) {
                                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                                     Text(
-                                        text = monthHistory.month.format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                                        text = monthData.month.format(DateTimeFormatter.ofPattern("MMMM yyyy")),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurface,
@@ -2202,8 +2221,6 @@ private fun HistoryStackedBarChart(
                                             )
                                             Spacer(Modifier.width(6.dp))
                                             Text(
-                                                // toTitleCase handles Plaid's ALL-CAPS merchant names;
-                                                // category labels are already properly cased so it's a no-op for them.
                                                 text = seg.label.toTitleCase(),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurface,
