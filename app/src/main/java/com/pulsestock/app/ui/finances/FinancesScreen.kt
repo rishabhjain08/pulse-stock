@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -160,6 +161,7 @@ fun FinancesScreen(
                 onClear = { vm.applyOverride(overridingTx.transactionId, null) },
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
+                countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
                 onDismiss = vm::cancelOverride,
             )
         }
@@ -1035,10 +1037,13 @@ private fun CategoryPickerSheet(
     onClear: () -> Unit,
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
+    countTransactionsWithOverride: suspend (String) -> Int,
     onDismiss: () -> Unit,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
     var showAutoDetectHint by remember { mutableStateOf(false) }
+    // Pending delete: category name + count of transactions that use it
+    var pendingDelete by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -1061,6 +1066,29 @@ private fun CategoryPickerSheet(
             kotlinx.coroutines.delay(2500)
             showAutoDetectHint = false
         }
+    }
+
+    pendingDelete?.let { (catName, count) ->
+        val meta = CategoryMeta.get(catName)
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Remove \"${meta.displayName}\"?") },
+            text = {
+                Text(
+                    "$count transaction${if (count == 1) "" else "s"} using this category will " +
+                    "revert to their default automatic category."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onDeleteCustomCategory(catName); pendingDelete = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
     }
 
     Column(
@@ -1105,7 +1133,13 @@ private fun CategoryPickerSheet(
                     label = meta.displayName,
                     selected = effectiveCat == cat,
                     onPick = { if (effectiveCat == cat && hasOverride) onClear() else onPick(cat) },
-                    onDelete = { onDeleteCustomCategory(cat) },
+                    onDelete = {
+                        scope.launch {
+                            val count = countTransactionsWithOverride(cat)
+                            if (count > 0) pendingDelete = cat to count
+                            else onDeleteCustomCategory(cat)
+                        }
+                    },
                 )
             }
             Spacer(Modifier.height(8.dp))

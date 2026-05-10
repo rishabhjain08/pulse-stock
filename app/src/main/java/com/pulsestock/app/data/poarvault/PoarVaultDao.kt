@@ -102,6 +102,9 @@ interface PoarVaultDao {
     @Query("DELETE FROM custom_categories WHERE name = :name")
     suspend fun deleteCustomCategory(name: String)
 
+    @Query("SELECT COUNT(*) FROM plaid_transactions WHERE categoryOverride = :category")
+    suspend fun countTransactionsWithOverride(category: String): Int
+
     @Query("UPDATE plaid_transactions SET categoryOverride = NULL WHERE categoryOverride = :category")
     suspend fun clearOverrideByCategory(category: String)
 

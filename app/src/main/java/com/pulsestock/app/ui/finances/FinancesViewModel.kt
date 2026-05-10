@@ -375,6 +375,9 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repo.deleteCustomCategory(name) }
     }
 
+    suspend fun countTransactionsWithOverride(name: String): Int =
+        repo.countTransactionsWithOverride(name)
+
     fun confirmMerchantRule() {
         val proposal = _uiState.value.pendingMerchantRule ?: return
         _uiState.value = _uiState.value.copy(pendingMerchantRule = null)
