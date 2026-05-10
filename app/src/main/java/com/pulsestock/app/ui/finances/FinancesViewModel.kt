@@ -160,6 +160,7 @@ data class FinancesUiState(
     // null = all selected (default); emptySet() = user explicitly cleared everything
     val historySelectedCategories: Set<String>? = null,
     val historySelectedMerchants: Set<String>? = null,
+    val historySelectedAccountIds: Set<String>? = null,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -313,22 +314,22 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value = _uiState.value.copy(balanceSnapshotsByMonth = byMonth)
                 }
         }
-        // Spending history — re-queries whenever the effective spending account selection changes.
-        // Uses effectiveSpendingAccounts (same derivation as the spending card) so the chart
-        // always reflects exactly the accounts the user has selected, not all credit accounts.
+        // Spending history — always uses all credit accounts as the universe; re-queries when
+        // credit accounts list or the history-specific account filter changes. Intentionally
+        // independent of the spending card window and selectedSpendingAccountIds.
         viewModelScope.launch {
             _uiState
-                .map { it.effectiveSpendingAccounts.map { a -> a.accountId } }
+                .map { Pair(it.creditAccounts.map { a -> a.accountId }, it.historySelectedAccountIds) }
                 .distinctUntilChanged()
-                .collect { accountIds ->
+                .collect { (allAccountIds, historySelectedIds) ->
+                    val accountIds = if (historySelectedIds == null) allAccountIds
+                        else allAccountIds.filter { it in historySelectedIds }
                     val (categoryRows, rawTxns) = try {
                         repo.getMonthlySpendingHistoryWithRaw(accountIds)
                     } catch (e: Exception) {
                         PulseLog.w("FinancesVM", "getMonthlySpendingHistory failed: ${e.message}")
                         Pair(emptyList(), emptyList())
                     }
-                    // rawTxns already scoped to accountIds by getMonthlySpendingHistoryWithRaw.
-                    // Filter defensively here as well so history never bleeds in unselected accounts.
                     val filteredTxns = if (accountIds.isEmpty()) emptyList()
                         else rawTxns.filter { it.accountId in accountIds }
                     val history = aggregateSpendingHistory(categoryRows)
@@ -656,10 +657,15 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = _uiState.value.copy(historySelectedMerchants = selected)
     }
 
+    fun setHistoryAccountFilter(selected: Set<String>?) {
+        _uiState.value = _uiState.value.copy(historySelectedAccountIds = selected)
+    }
+
     fun clearHistoryFilters() {
         _uiState.value = _uiState.value.copy(
             historySelectedCategories = null,
             historySelectedMerchants = null,
+            historySelectedAccountIds = null,
         )
     }
 

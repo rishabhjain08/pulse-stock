@@ -379,9 +379,11 @@ fun FinancesScreen(
                             historySelectedMerchants = state.historySelectedMerchants,
                             onSetHistoryCategoryFilter = vm::setHistoryCategoryFilter,
                             onSetHistoryMerchantFilter = vm::setHistoryMerchantFilter,
+                            onSetHistoryAccountFilter = vm::setHistoryAccountFilter,
                             onClearHistoryFilters = vm::clearHistoryFilters,
                             balanceSnapshotsByMonth = state.balanceSnapshotsByMonth,
-                            selectedAccountNames = state.effectiveSpendingAccounts.map { it.name },
+                            allCreditAccounts = state.creditAccounts,
+                            historySelectedAccountIds = state.historySelectedAccountIds,
                         )
                     }
                 }
@@ -759,9 +761,11 @@ private fun CategoryBreakdownCard(
     historySelectedMerchants: Set<String>?,
     onSetHistoryCategoryFilter: (Set<String>?) -> Unit,
     onSetHistoryMerchantFilter: (Set<String>?) -> Unit,
+    onSetHistoryAccountFilter: (Set<String>?) -> Unit,
     onClearHistoryFilters: () -> Unit,
     balanceSnapshotsByMonth: List<MonthlyBalanceSnapshot>,
-    selectedAccountNames: List<String>,
+    allCreditAccounts: List<AccountEntity>,
+    historySelectedAccountIds: Set<String>?,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var showHistorySheet by rememberSaveable { mutableStateOf(false) }
@@ -785,9 +789,10 @@ private fun CategoryBreakdownCard(
                 historySelectedMerchants = historySelectedMerchants,
                 onSetHistoryCategoryFilter = onSetHistoryCategoryFilter,
                 onSetHistoryMerchantFilter = onSetHistoryMerchantFilter,
+                onSetHistoryAccountFilter = onSetHistoryAccountFilter,
                 onClearHistoryFilters = onClearHistoryFilters,
-                selectedAccountNames = selectedAccountNames,
-                spendingWindow = spendingWindow,
+                allCreditAccounts = allCreditAccounts,
+                historySelectedAccountIds = historySelectedAccountIds,
                 currencyFmt = currencyFmt,
             )
         }
@@ -1794,9 +1799,10 @@ private fun SpendingHistorySheet(
     historySelectedMerchants: Set<String>?,
     onSetHistoryCategoryFilter: (Set<String>?) -> Unit,
     onSetHistoryMerchantFilter: (Set<String>?) -> Unit,
+    onSetHistoryAccountFilter: (Set<String>?) -> Unit,
     onClearHistoryFilters: () -> Unit,
-    selectedAccountNames: List<String>,
-    spendingWindow: SpendingWindow,
+    allCreditAccounts: List<AccountEntity>,
+    historySelectedAccountIds: Set<String>?,
     currencyFmt: NumberFormat,
 ) {
     var filterDialogOpen by rememberSaveable { mutableStateOf(false) }
@@ -1810,21 +1816,14 @@ private fun SpendingHistorySheet(
         buildHistoryColorMap(allHistoryCategories, historySelectedCategories, palette, miscColor)
     }
 
-    // Badge counts for Fix 5
     val totalCategoryCount = allHistoryCategories.size
-    val selectedCategoryCount = when {
-        historySelectedCategories == null -> totalCategoryCount  // all selected
-        else -> historySelectedCategories.size
-    }
     val totalMerchantCount = topMerchantsForHistory.size
-    val selectedMerchantCount = when {
-        historySelectedMerchants == null -> totalMerchantCount  // all selected
-        else -> historySelectedMerchants.size
-    }
+    val totalAccountCount = allCreditAccounts.size
     val categoryFiltered = historySelectedCategories != null && historySelectedCategories.size < totalCategoryCount
     val merchantFiltered = historySelectedMerchants != null && historySelectedMerchants.size < totalMerchantCount
+    val accountFiltered = historySelectedAccountIds != null && historySelectedAccountIds.size < totalAccountCount
+    val anyFiltered = categoryFiltered || merchantFiltered || accountFiltered
 
-    // Single unified filter dialog
     if (filterDialogOpen) {
         HistoryFilterDialog(
             allCategories = allHistoryCategories,
@@ -1834,6 +1833,9 @@ private fun SpendingHistorySheet(
             historySelectedCategories = historySelectedCategories,
             onSetCategoryFilter = onSetHistoryCategoryFilter,
             onSetMerchantFilter = onSetHistoryMerchantFilter,
+            allCreditAccounts = allCreditAccounts,
+            historySelectedAccountIds = historySelectedAccountIds,
+            onSetAccountFilter = onSetHistoryAccountFilter,
             onDismiss = { filterDialogOpen = false },
         )
     }
@@ -1870,11 +1872,16 @@ private fun SpendingHistorySheet(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                val cardLabel = selectedAccountNames
-                    .joinToString(", ") { it.shortCardName() }
-                    .ifEmpty { "All cards" }
+                val cardLabel = if (historySelectedAccountIds == null) {
+                    "All cards"
+                } else {
+                    allCreditAccounts
+                        .filter { it.accountId in historySelectedAccountIds }
+                        .joinToString(", ") { it.name.shortCardName() }
+                        .ifEmpty { "All cards" }
+                }
                 Text(
-                    text = "${spendingWindow.label} · $cardLabel",
+                    text = "Last 12 months · $cardLabel",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1891,32 +1898,17 @@ private fun SpendingHistorySheet(
                 Icon(
                     imageVector = Icons.Outlined.FilterList,
                     contentDescription = "Filter spending history",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (anyFiltered) MaterialTheme.colorScheme.primary
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp),
                 )
-                // Category count badge
-                Text(
-                    text = "$selectedCategoryCount/$totalCategoryCount",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (categoryFiltered)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "·",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // Merchant count badge
-                Text(
-                    text = "$selectedMerchantCount/$totalMerchantCount",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (merchantFiltered)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (anyFiltered) {
+                    Text(
+                        text = "Filtered",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
 
@@ -2424,6 +2416,9 @@ private fun HistoryFilterDialog(
     historySelectedCategories: Set<String>?,
     onSetCategoryFilter: (Set<String>?) -> Unit,
     onSetMerchantFilter: (Set<String>?) -> Unit,
+    allCreditAccounts: List<AccountEntity>,
+    historySelectedAccountIds: Set<String>?,
+    onSetAccountFilter: (Set<String>?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Segmented tab index: 0 = Categories, 1 = Merchants
@@ -2465,14 +2460,20 @@ private fun HistoryFilterDialog(
                 SegmentedButton(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
                     label = { Text("Categories") },
                 )
                 SegmentedButton(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
                     label = { Text("Merchants") },
+                )
+                SegmentedButton(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
+                    label = { Text("Cards") },
                 )
             }
 
@@ -2499,7 +2500,7 @@ private fun HistoryFilterDialog(
                         )
                     },
                 )
-            } else {
+            } else if (selectedTab == 1) {
                 val checkedKeys = selectedMerchants ?: allMerchantKeys
                 HistoryFilterTabContent(
                     items = visibleMerchants.map { m ->
@@ -2515,6 +2516,28 @@ private fun HistoryFilterDialog(
                     onSetFilter = { newSet ->
                         onSetMerchantFilter(
                             if (newSet == allMerchantKeys) null else newSet
+                        )
+                    },
+                )
+            } else {
+                val allAccountKeys = remember(allCreditAccounts) {
+                    allCreditAccounts.map { it.accountId }.toSet()
+                }
+                val checkedKeys = historySelectedAccountIds ?: allAccountKeys
+                HistoryFilterTabContent(
+                    items = allCreditAccounts.map { account ->
+                        FilterItem(
+                            key = account.accountId,
+                            label = account.name,
+                            prefix = null,
+                            totalAmount = 0.0,
+                        )
+                    },
+                    allKeys = allAccountKeys,
+                    checkedKeys = checkedKeys,
+                    onSetFilter = { newSet ->
+                        onSetAccountFilter(
+                            if (newSet == allAccountKeys) null else newSet
                         )
                     },
                 )
