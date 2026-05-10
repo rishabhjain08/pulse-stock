@@ -2426,7 +2426,6 @@ private fun HistoryFilterDialog(
     val allAccountKeys = remember(allCreditAccounts) {
         allCreditAccounts.map { it.accountId }.toSet()
     }
-    val cardFiltered = historySelectedAccountIds != null
 
     val allCategoryKeys = remember(allCategories) {
         allCategories.map { it.effectiveCategory }.toSet()
@@ -2480,40 +2479,17 @@ private fun HistoryFilterDialog(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
-                    label = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Categories")
-                            if (cardFiltered) {
-                                Text(
-                                    text = "card filtered",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    },
+                    label = { Text("Categories") },
                 )
                 SegmentedButton(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
                     shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
-                    label = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Merchants")
-                            if (cardFiltered || categoryFiltered) {
-                                Text(
-                                    text = "${visibleMerchants.size} of ${allMerchants.size}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    },
+                    label = { Text("Merchants") },
                 )
             }
 
             if (selectedTab == 0) {
-                val checkedKeys = historySelectedAccountIds ?: allAccountKeys
                 HistoryFilterTabContent(
                     items = allCreditAccounts.map { account ->
                         FilterItem(
@@ -2524,79 +2500,43 @@ private fun HistoryFilterDialog(
                         )
                     },
                     allKeys = allAccountKeys,
-                    checkedKeys = checkedKeys,
+                    checkedKeys = historySelectedAccountIds ?: allAccountKeys,
                     onSetFilter = { newSet ->
                         onSetAccountFilter(if (newSet == allAccountKeys) null else newSet)
                     },
                 )
             } else if (selectedTab == 1) {
-                if (allCategories.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "No categories for the selected cards",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            TextButton(onClick = { onSetAccountFilter(null) }) {
-                                Text("Clear card filter")
-                            }
-                        }
-                    }
-                } else {
-                    HistoryFilterTabContent(
-                        items = allCategories.map { cat ->
-                            FilterItem(
-                                key = cat.effectiveCategory,
-                                label = CategoryMeta.get(cat.effectiveCategory).displayName,
-                                prefix = CategoryMeta.get(cat.effectiveCategory).emoji,
-                                totalAmount = cat.totalAmount,
-                            )
-                        },
-                        allKeys = allCategoryKeys,
-                        checkedKeys = effectiveCategorySelection ?: allCategoryKeys,
-                        onSetFilter = { newSet ->
-                            onSetCategoryFilter(if (newSet == allCategoryKeys) null else newSet)
-                        },
-                    )
-                }
+                HistoryFilterTabContent(
+                    items = allCategories.map { cat ->
+                        FilterItem(
+                            key = cat.effectiveCategory,
+                            label = CategoryMeta.get(cat.effectiveCategory).displayName,
+                            prefix = CategoryMeta.get(cat.effectiveCategory).emoji,
+                            totalAmount = cat.totalAmount,
+                        )
+                    },
+                    allKeys = allCategoryKeys,
+                    checkedKeys = effectiveCategorySelection ?: allCategoryKeys,
+                    onSetFilter = { newSet ->
+                        onSetCategoryFilter(if (newSet == allCategoryKeys) null else newSet)
+                    },
+                )
             } else {
-                if (visibleMerchants.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "No merchants for the selected categories",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            TextButton(onClick = { onSetCategoryFilter(null) }) {
-                                Text("Clear category filter")
-                            }
-                        }
-                    }
-                } else {
-                    HistoryFilterTabContent(
-                        items = visibleMerchants.map { m ->
-                            FilterItem(
-                                key = m.merchantName,
-                                label = m.merchantName.toTitleCase(),
-                                prefix = null,
-                                totalAmount = m.totalAmount,
-                            )
-                        },
-                        allKeys = allMerchantKeys,
-                        checkedKeys = effectiveMerchantSelection ?: allMerchantKeys,
-                        onSetFilter = { newSet ->
-                            onSetMerchantFilter(if (newSet == allMerchantKeys) null else newSet)
-                        },
-                    )
-                }
+                HistoryFilterTabContent(
+                    items = visibleMerchants.map { m ->
+                        FilterItem(
+                            key = m.merchantName,
+                            label = m.merchantName.toTitleCase(),
+                            prefix = null,
+                            totalAmount = m.totalAmount,
+                        )
+                    },
+                    allKeys = allMerchantKeys,
+                    checkedKeys = effectiveMerchantSelection ?: allMerchantKeys,
+                    onSetFilter = { newSet ->
+                        onSetMerchantFilter(if (newSet == allMerchantKeys) null else newSet)
+                    },
+                )
             }
         }
     }
