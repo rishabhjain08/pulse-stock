@@ -1,6 +1,8 @@
 package com.pulsestock.app.ui.finances
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateContentSize
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -78,7 +81,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -1043,15 +1048,16 @@ private fun CategoryPickerSheet(
     var showChangeHint by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Pair<String, Int>?>(null) }
 
-    if (showChangeHint) {
-        LaunchedEffect(Unit) {
-            kotlinx.coroutines.delay(2500)
+    LaunchedEffect(showChangeHint) {
+        if (showChangeHint) {
+            kotlinx.coroutines.delay(3000)
             showChangeHint = false
         }
     }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val haptic = LocalHapticFeedback.current
 
     val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
     val effectiveCat = transaction?.effectiveCategory ?: "OTHER"
@@ -1089,13 +1095,48 @@ private fun CategoryPickerSheet(
         )
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(scrollState)
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 32.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Banner is anchored above the scroll content so it's always visible regardless of
+        // scroll position — the selected item floats to top where the user's thumb already is.
+        AnimatedVisibility(
+            visible = showChangeHint,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "Tap a different category to change it",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+        ) {
         Text(
             text = "Change category",
             style = MaterialTheme.typography.titleLarge,
@@ -1130,7 +1171,12 @@ private fun CategoryPickerSheet(
                     emoji = meta.emoji,
                     label = meta.displayName,
                     selected = effectiveCat == cat,
-                    onPick = { if (effectiveCat == cat) showChangeHint = true else onPick(cat) },
+                    onPick = {
+                        if (effectiveCat == cat) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showChangeHint = true
+                        } else onPick(cat)
+                    },
                     onDelete = {
                         scope.launch {
                             val count = countTransactionsWithOverride(cat)
@@ -1171,7 +1217,10 @@ private fun CategoryPickerSheet(
                 emoji = orphanMeta.emoji,
                 label = orphanMeta.displayName,
                 selected = true,
-                onPick = { showChangeHint = true },
+                onPick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    showChangeHint = true
+                },
             )
         }
         sortedQuickPicks.forEach { (code, meta) ->
@@ -1186,6 +1235,7 @@ private fun CategoryPickerSheet(
                 onPick = {
                     val isSameDisplay = CategoryMeta.get(effectiveCat).displayName == meta.displayName
                     if (effectiveCat == code || (isSameDisplay && !effectiveCatInQuickPicks)) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         showChangeHint = true
                     } else onPick(code)
                 },
@@ -1225,28 +1275,8 @@ private fun CategoryPickerSheet(
             }
         }
 
-        AnimatedVisibility(
-            visible = showChangeHint,
-            enter = fadeIn() + slideInVertically { it / 2 },
-            exit = fadeOut() + slideOutVertically { it / 2 },
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.inverseSurface,
-                tonalElevation = 0.dp,
-            ) {
-                Text(
-                    text = "Tap a different category to change it",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.inverseOnSurface,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                )
-            }
-        }
-    }
+        } // inner scrollable Column
+    } // outer Column
 }
 
 @Composable
