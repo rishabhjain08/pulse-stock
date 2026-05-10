@@ -8,9 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -176,16 +174,17 @@ fun FinancesScreen(
             title = { Text("Apply to all ${proposal.merchantName}?") },
             text = {
                 Text(
-                    "Set ${proposalMeta.emoji} ${proposalMeta.displayName} for ${proposal.otherCount} other " +
-                    "${proposal.merchantName} transaction${if (proposal.otherCount == 1) "" else "s"} " +
-                    "and remember this rule for future syncs."
+                    "Also set ${proposalMeta.emoji} ${proposalMeta.displayName} for " +
+                    "${proposal.otherCount} other ${proposal.merchantName} " +
+                    "transaction${if (proposal.otherCount == 1) "" else "s"} " +
+                    "and save as a rule for future syncs."
                 )
             },
             confirmButton = {
-                Button(onClick = vm::confirmMerchantRule) { Text("Apply to all") }
+                Button(onClick = vm::confirmMerchantRule) { Text("Yes") }
             },
             dismissButton = {
-                TextButton(onClick = vm::dismissMerchantRule) { Text("Just this one") }
+                TextButton(onClick = vm::dismissMerchantRule) { Text("No") }
             },
         )
     }
@@ -1041,8 +1040,6 @@ private fun CategoryPickerSheet(
     onDismiss: () -> Unit,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
-    var showAutoDetectHint by remember { mutableStateOf(false) }
-    // Pending delete: category name + count of transactions that use it
     var pendingDelete by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -1060,13 +1057,6 @@ private fun CategoryPickerSheet(
     // Effective category not covered by either list — surface it at top of Categories
     val effectiveCatInQuickPicks = effectiveCat in quickPickCodes
     val effectiveCatInCustom = effectiveCat in trulyCustomCategories
-
-    if (showAutoDetectHint) {
-        LaunchedEffect(Unit) {
-            kotlinx.coroutines.delay(2500)
-            showAutoDetectHint = false
-        }
-    }
 
     pendingDelete?.let { (catName, count) ->
         val meta = CategoryMeta.get(catName)
@@ -1161,23 +1151,34 @@ private fun CategoryPickerSheet(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        if (!effectiveCatInQuickPicks && !effectiveCatInCustom) {
+        // Suppress orphan when its display name already appears in quick picks — avoids
+        // showing two identically-named rows (e.g. both Gym codes map to "Gym").
+        val quickPickDisplayNames = remember { CategoryMeta.quickPicks.map { it.second.displayName }.toSet() }
+        val orphanDisplayName = CategoryMeta.get(effectiveCat).displayName
+        val showOrphan = !effectiveCatInQuickPicks && !effectiveCatInCustom &&
+            orphanDisplayName !in quickPickDisplayNames
+        if (showOrphan) {
             val orphanMeta = CategoryMeta.get(effectiveCat)
             CategoryPickerRow(
                 emoji = orphanMeta.emoji,
                 label = orphanMeta.displayName,
                 selected = true,
-                onPick = { showAutoDetectHint = true },
+                onPick = { onClear() },
             )
         }
         sortedQuickPicks.forEach { (code, meta) ->
+            // Show as selected if effectiveCat is this code OR a sibling code with same displayName
+            // (e.g. PERSONAL_CARE_GYMS → shows ENTERTAINMENT_GYMS quickPick as selected)
+            val siblingSelected = !effectiveCatInQuickPicks && !effectiveCatInCustom &&
+                CategoryMeta.get(effectiveCat).displayName == meta.displayName
             CategoryPickerRow(
                 emoji = meta.emoji,
                 label = meta.displayName,
-                selected = effectiveCat == code,
+                selected = effectiveCat == code || siblingSelected,
                 onPick = {
-                    if (effectiveCat == code) {
-                        if (hasOverride) onClear() else showAutoDetectHint = true
+                    val isSameDisplay = CategoryMeta.get(effectiveCat).displayName == meta.displayName
+                    if (effectiveCat == code || (isSameDisplay && !effectiveCatInQuickPicks)) {
+                        onClear()
                     } else onPick(code)
                 },
             )
@@ -1216,28 +1217,6 @@ private fun CategoryPickerSheet(
             }
         }
 
-        // Auto-hide hint when user taps an auto-detected (non-overridable) category
-        AnimatedVisibility(
-            visible = showAutoDetectHint,
-            enter = fadeIn() + slideInVertically { it / 2 },
-            exit = fadeOut() + slideOutVertically { it / 2 },
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.inverseSurface,
-                tonalElevation = 0.dp,
-            ) {
-                Text(
-                    text = "Auto-detected — tap another category to change it",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.inverseOnSurface,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                )
-            }
-        }
     }
 }
 

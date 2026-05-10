@@ -97,6 +97,13 @@ object CategoryMeta {
         "OTHER" to Meta("📦", "Other"),
     )
 
+    // All raw codes that share the same display name (e.g. both GYM codes → listOf(...))
+    private val byDisplayName: Map<String, List<String>> by lazy {
+        map.entries.groupBy({ it.value.displayName }, { it.key })
+    }
+    fun getCodesForDisplayName(displayName: String): List<String> =
+        byDisplayName[displayName] ?: emptyList()
+
     fun get(code: String): Meta = map[code] ?: Meta(
         emoji = "📦",
         displayName = code.split("_").let { parts ->

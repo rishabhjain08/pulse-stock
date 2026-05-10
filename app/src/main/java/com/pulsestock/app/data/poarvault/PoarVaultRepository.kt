@@ -111,10 +111,10 @@ class PoarVaultRepository(
 
     suspend fun getTransactionsForCategory(
         ranges: List<AccountDateRange>,
-        category: String,
+        categories: List<String>,
     ): List<PlaidTransaction> {
-        if (ranges.isEmpty()) return emptyList()
-        val query = buildTransactionsForCategoryQuery(ranges, category)
+        if (ranges.isEmpty() || categories.isEmpty()) return emptyList()
+        val query = buildTransactionsForCategoryQuery(ranges, categories)
         return db.dao().getTransactionsForCategoryRaw(query)
     }
 
@@ -228,16 +228,18 @@ class PoarVaultRepository(
 
     private fun buildTransactionsForCategoryQuery(
         ranges: List<AccountDateRange>,
-        category: String,
+        categories: List<String>,
     ): SimpleSQLiteQuery {
+        val placeholders = categories.joinToString(",") { "?" }
         val sb = StringBuilder(
             """SELECT pt.* FROM plaid_transactions pt
         INNER JOIN accounts a ON pt.accountId = a.accountId
         WHERE a.type = 'credit'
-          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') = ?
+          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') IN ($placeholders)
           AND ("""
         )
-        val args = mutableListOf<Any>(category)
+        val args = mutableListOf<Any>()
+        args.addAll(categories)
         ranges.forEachIndexed { i, r ->
             if (i > 0) sb.append(" OR ")
             sb.append("(pt.accountId = ? AND pt.date >= ? AND pt.date <= ?)")

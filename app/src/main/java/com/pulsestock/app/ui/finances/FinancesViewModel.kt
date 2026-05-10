@@ -7,6 +7,7 @@ import com.pulsestock.app.data.poarvault.AccountDateRange
 import com.pulsestock.app.data.poarvault.AccountEntity
 import com.pulsestock.app.data.poarvault.MerchantRuleProposal
 import com.pulsestock.app.data.poarvault.CategorySpend
+import com.pulsestock.app.ui.finances.CategoryMeta
 import com.pulsestock.app.data.poarvault.ExpenseWithLinks
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.PoarVaultApi
@@ -67,6 +68,9 @@ data class FinancesUiState(
     // Date range label shown as subtitle (e.g. "Apr 12 – May 9")
     val spendingDateRangeLabel: String? = null,
     val categoryBreakdown: List<CategorySpend> = emptyList(),
+    // Maps canonical effectiveCategory code → all sibling codes seen in breakdown data.
+    // Built alongside the breakdown so drill-through can fetch all synonymous Plaid codes.
+    val categoryCodeGroups: Map<String, List<String>> = emptyMap(),
     val categoryDrillDown: String? = null,
     val drillDownTransactions: List<PlaidTransaction> = emptyList(),
     val overridingTransaction: PlaidTransaction? = null,
@@ -172,8 +176,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     repo.watchCategoryBreakdown(ranges)
                 }
                 .collect { breakdown ->
-                    PulseLog.d("FinancesVM", "categoryBreakdown: ${breakdown.size} categories")
-                    _uiState.value = _uiState.value.copy(categoryBreakdown = breakdown)
+                    // Group by display name so codes like ENTERTAINMENT_GYMS and
+                    // PERSONAL_CARE_GYMS (both "Gym") or unmapped codes like TRAVEL_FLIGHTS
+                    // ("Flights") merge into one row. Store all sibling codes per canonical
+                    // code so drill-through can query all of them, not just the first.
+                    val grouped = breakdown.groupBy { CategoryMeta.get(it.effectiveCategory).displayName }
+                    val merged = grouped.values.map { rows ->
+                        rows.reduce { acc, row ->
+                            CategorySpend(
+                                effectiveCategory = acc.effectiveCategory,
+                                totalAmount = acc.totalAmount + row.totalAmount,
+                                txCount = acc.txCount + row.txCount,
+                            )
+                        }
+                    }.sortedByDescending { it.totalAmount }
+                    val codeGroups = grouped.values.associate { rows ->
+                        rows.first().effectiveCategory to rows.map { it.effectiveCategory }
+                    }
+                    PulseLog.d("FinancesVM", "categoryBreakdown: ${merged.size} categories (${breakdown.size} raw)")
+                    _uiState.value = _uiState.value.copy(categoryBreakdown = merged, categoryCodeGroups = codeGroups)
                 }
         }
         // Auto-load transactions + liabilities on session start
@@ -328,7 +349,8 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     fun openCategoryDrillDown(category: String) {
         viewModelScope.launch {
             val ranges = currentSpendingRanges()
-            val txns = repo.getTransactionsForCategory(ranges, category)
+            val allCodes = _uiState.value.categoryCodeGroups[category] ?: listOf(category)
+            val txns = repo.getTransactionsForCategory(ranges, allCodes)
             _uiState.value = _uiState.value.copy(
                 categoryDrillDown = category,
                 drillDownTransactions = txns,
@@ -358,7 +380,8 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             val drillCategory = _uiState.value.categoryDrillDown
             val newState = if (drillCategory != null) {
                 val ranges = currentSpendingRanges()
-                val txns = repo.getTransactionsForCategory(ranges, drillCategory)
+                val allCodes = _uiState.value.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
+                val txns = repo.getTransactionsForCategory(ranges, allCodes)
                 _uiState.value.copy(drillDownTransactions = txns, overridingTransaction = null)
             } else {
                 _uiState.value.copy(overridingTransaction = null)
