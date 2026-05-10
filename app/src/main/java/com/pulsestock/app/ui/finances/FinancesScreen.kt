@@ -2419,22 +2419,38 @@ private fun HistoryFilterDialog(
     onSetAccountFilter: (Set<String>?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Segmented tab index: 0 = Categories, 1 = Merchants
+    // Tab order: 0 = Cards, 1 = Categories, 2 = Merchants
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    // ── Derived sets (cascade chain: Cards → Categories → Merchants) ──────────
+    val allAccountKeys = remember(allCreditAccounts) {
+        allCreditAccounts.map { it.accountId }.toSet()
+    }
+    val cardFiltered = historySelectedAccountIds != null
 
     val allCategoryKeys = remember(allCategories) {
         allCategories.map { it.effectiveCategory }.toSet()
     }
+    // Intersect stored category selection with what's still visible after card filter.
+    // If everything visible is selected (or nothing was explicitly filtered), treat as null.
+    val effectiveCategorySelection = remember(selectedCategories, allCategoryKeys) {
+        val intersected = selectedCategories?.intersect(allCategoryKeys) ?: allCategoryKeys
+        if (intersected == allCategoryKeys) null else intersected
+    }
+    val categoryFiltered = effectiveCategorySelection != null
 
-    // Merchant smart-filter: always derived from live ViewModel category state.
-    // Categories commit immediately so historySelectedCategories is always current
-    // — switching tabs after ticking a category shows the correctly narrowed merchant list.
-    val visibleMerchants = remember(allMerchants, historySelectedCategories) {
-        if (historySelectedCategories == null) allMerchants
-        else allMerchants.filter { it.primaryCategory in historySelectedCategories }
+    // Merchants narrowed by the effective (cascaded) category selection.
+    val visibleMerchants = remember(allMerchants, effectiveCategorySelection) {
+        if (effectiveCategorySelection == null) allMerchants
+        else allMerchants.filter { it.primaryCategory in effectiveCategorySelection }
     }
     val allMerchantKeys = remember(visibleMerchants) {
         visibleMerchants.map { it.merchantName }.toSet()
+    }
+    // Same intersection logic for merchants.
+    val effectiveMerchantSelection = remember(selectedMerchants, allMerchantKeys) {
+        val intersected = selectedMerchants?.intersect(allMerchantKeys) ?: allMerchantKeys
+        if (intersected == allMerchantKeys) null else intersected
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -2453,74 +2469,50 @@ private fun HistoryFilterDialog(
                 .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Segmented button only — no title Text above it (the button is self-explanatory).
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 SegmentedButton(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
-                    label = { Text("Categories") },
+                    label = { Text("Cards") },
                 )
                 SegmentedButton(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
-                    label = { Text("Merchants") },
+                    label = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Categories")
+                            if (cardFiltered) {
+                                Text(
+                                    text = "card filtered",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    },
                 )
                 SegmentedButton(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
                     shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
-                    label = { Text("Cards") },
+                    label = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Merchants")
+                            if (cardFiltered || categoryFiltered) {
+                                Text(
+                                    text = "${visibleMerchants.size} of ${allMerchants.size}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    },
                 )
             }
 
-            // Plain if/else — no AnimatedContent, no CrossFade.
-            // The segmented button already signals the switch; a transition animation
-            // on top of it would cause a full LazyColumn recompose each time.
             if (selectedTab == 0) {
-                val checkedKeys = selectedCategories ?: allCategoryKeys
-                HistoryFilterTabContent(
-                    items = allCategories.map { cat ->
-                        FilterItem(
-                            key = cat.effectiveCategory,
-                            label = CategoryMeta.get(cat.effectiveCategory).displayName,
-                            prefix = CategoryMeta.get(cat.effectiveCategory).emoji,
-                            totalAmount = cat.totalAmount,
-                        )
-                    },
-                    allKeys = allCategoryKeys,
-                    checkedKeys = checkedKeys,
-                    onSetFilter = { newSet ->
-                        // Normalise: full set → null (no filter), otherwise pass through
-                        onSetCategoryFilter(
-                            if (newSet == allCategoryKeys) null else newSet
-                        )
-                    },
-                )
-            } else if (selectedTab == 1) {
-                val checkedKeys = selectedMerchants ?: allMerchantKeys
-                HistoryFilterTabContent(
-                    items = visibleMerchants.map { m ->
-                        FilterItem(
-                            key = m.merchantName,
-                            label = m.merchantName.toTitleCase(),
-                            prefix = null,
-                            totalAmount = m.totalAmount,
-                        )
-                    },
-                    allKeys = allMerchantKeys,
-                    checkedKeys = checkedKeys,
-                    onSetFilter = { newSet ->
-                        onSetMerchantFilter(
-                            if (newSet == allMerchantKeys) null else newSet
-                        )
-                    },
-                )
-            } else {
-                val allAccountKeys = remember(allCreditAccounts) {
-                    allCreditAccounts.map { it.accountId }.toSet()
-                }
                 val checkedKeys = historySelectedAccountIds ?: allAccountKeys
                 HistoryFilterTabContent(
                     items = allCreditAccounts.map { account ->
@@ -2534,11 +2526,77 @@ private fun HistoryFilterDialog(
                     allKeys = allAccountKeys,
                     checkedKeys = checkedKeys,
                     onSetFilter = { newSet ->
-                        onSetAccountFilter(
-                            if (newSet == allAccountKeys) null else newSet
-                        )
+                        onSetAccountFilter(if (newSet == allAccountKeys) null else newSet)
                     },
                 )
+            } else if (selectedTab == 1) {
+                if (allCategories.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "No categories for the selected cards",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TextButton(onClick = { onSetAccountFilter(null) }) {
+                                Text("Clear card filter")
+                            }
+                        }
+                    }
+                } else {
+                    HistoryFilterTabContent(
+                        items = allCategories.map { cat ->
+                            FilterItem(
+                                key = cat.effectiveCategory,
+                                label = CategoryMeta.get(cat.effectiveCategory).displayName,
+                                prefix = CategoryMeta.get(cat.effectiveCategory).emoji,
+                                totalAmount = cat.totalAmount,
+                            )
+                        },
+                        allKeys = allCategoryKeys,
+                        checkedKeys = effectiveCategorySelection ?: allCategoryKeys,
+                        onSetFilter = { newSet ->
+                            onSetCategoryFilter(if (newSet == allCategoryKeys) null else newSet)
+                        },
+                    )
+                }
+            } else {
+                if (visibleMerchants.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "No merchants for the selected categories",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TextButton(onClick = { onSetCategoryFilter(null) }) {
+                                Text("Clear category filter")
+                            }
+                        }
+                    }
+                } else {
+                    HistoryFilterTabContent(
+                        items = visibleMerchants.map { m ->
+                            FilterItem(
+                                key = m.merchantName,
+                                label = m.merchantName.toTitleCase(),
+                                prefix = null,
+                                totalAmount = m.totalAmount,
+                            )
+                        },
+                        allKeys = allMerchantKeys,
+                        checkedKeys = effectiveMerchantSelection ?: allMerchantKeys,
+                        onSetFilter = { newSet ->
+                            onSetMerchantFilter(if (newSet == allMerchantKeys) null else newSet)
+                        },
+                    )
+                }
             }
         }
     }
