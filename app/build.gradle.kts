@@ -29,6 +29,11 @@ val splitwiseConsumerKey: String = localProps.getProperty("SPLITWISE_CONSUMER_KE
     ?: System.getenv("SPLITWISE_CONSUMER_KEY")
     ?: ""
 // SPLITWISE_CONSUMER_SECRET is intentionally not read here.
+
+// VERBOSE_LOGGING — if explicitly set in local.properties or env, that value wins for all build
+// types. If absent, debug builds default to true and release/production default to false.
+val verboseLoggingOverride: Boolean? = (localProps.getProperty("VERBOSE_LOGGING")
+    ?: System.getenv("VERBOSE_LOGGING"))?.toBooleanStrictOrNull()
 // It is only used by the Lambda for the token exchange and must never be baked into the APK.
 
 // Android 16 (API 36) made Configuration.fontWeightAdjustment private.
@@ -61,8 +66,7 @@ android {
         buildConfigField("String", "POARVAULT_API_URL", "\"$poarvaultApiUrl\"")
         buildConfigField("String", "POARVAULT_API_KEY", "\"$poarvaultApiKey\"")
         buildConfigField("String", "SPLITWISE_CONSUMER_KEY", "\"$splitwiseConsumerKey\"")
-        // Verbose logcat logging — grep PulseLog to find and remove before production release
-        buildConfigField("Boolean", "VERBOSE_LOGGING", "false")
+        buildConfigField("Boolean", "VERBOSE_LOGGING", "${verboseLoggingOverride ?: false}")
         // Splitwise reconciliation UI — not ready for users yet
         buildConfigField("Boolean", "RECONCILIATION_ENABLED", "false")
     }
@@ -99,7 +103,10 @@ android {
         }
         debug {
             isDebuggable = true
-            buildConfigField("Boolean", "VERBOSE_LOGGING", "true")
+            // Only override to true if caller hasn't pinned a specific value in local.properties
+            if (verboseLoggingOverride == null) {
+                buildConfigField("Boolean", "VERBOSE_LOGGING", "true")
+            }
         }
     }
 

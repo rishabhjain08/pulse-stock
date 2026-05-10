@@ -28,5 +28,10 @@ POARVAULT_API_KEY=your_poarvault_api_key_here
 SPLITWISE_CONSUMER_KEY=your_splitwise_consumer_key_here
 SPLITWISE_CONSUMER_SECRET=your_splitwise_consumer_secret_here
 
+# Verbose logcat logging. Omit this key to use the default (true in debug, false in release).
+# Set to true to enable logs in a release build for local debugging.
+# Set to false to silence logs in a debug build.
+# VERBOSE_LOGGING=false
+
 # Android SDK path (Android Studio fills this automatically)
 # sdk.dir=/Users/you/Library/Android/sdk

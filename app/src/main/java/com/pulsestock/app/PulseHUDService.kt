@@ -5,7 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
@@ -91,6 +94,15 @@ class PulseHUDService : Service() {
     /** True while the price popup is expanded over the screen. */
     private val popupVisible = MutableStateFlow(false)
 
+    // Close the popup whenever the screen goes off (lock, power button, auto-timeout).
+    // ACTION_SCREEN_OFF is not sticky and cannot be received by a manifest receiver,
+    // so it must be registered dynamically while the service is alive.
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF) hidePopup()
+        }
+    }
+
     /** True while the bubble is being dragged over the trash zone. */
     private val trashHovered = MutableStateFlow(false)
 
@@ -103,6 +115,7 @@ class PulseHUDService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         lifecycleOwner.onCreate()
+        registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -114,6 +127,7 @@ class PulseHUDService : Service() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(screenOffReceiver)
         hideBubble()
         streamManager.close()
         serviceScope.cancel()

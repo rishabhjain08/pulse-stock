@@ -5,6 +5,7 @@ import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.CertificatePinner
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,7 +13,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 class PoarVaultApi {
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .certificatePinner(buildPinner())
+        .build()
     private val json = Json { ignoreUnknownKeys = true }
     private val mediaType = "application/json".toMediaType()
 
@@ -55,5 +58,27 @@ class PoarVaultApi {
             error("API ${resp.code}: $body")
         }
         json.decodeFromString<T>(body)
+    }
+
+    companion object {
+        // Extract hostname from the API URL so the pin pattern matches whatever Gateway
+        // endpoint is configured — regardless of API ID or region.
+        private val apiHost: String by lazy {
+            runCatching {
+                java.net.URL(BuildConfig.POARVAULT_API_URL).host
+            }.getOrDefault("*.execute-api.us-east-2.amazonaws.com")
+        }
+
+        // Pins: Amazon RSA 2048 M01 (intermediate) + Amazon Root CA 1 (root).
+        // Pinning intermediates and roots is more stable than pinning the leaf — AWS rotates
+        // leaf certs for API Gateway roughly every 13 months and without advance notice.
+        // If Amazon issues a new intermediate CA, update AMAZON_INTERMEDIATE below.
+        // Hashes verified: 2025-05-10 via openssl s_client against the production endpoint.
+        private const val AMAZON_INTERMEDIATE = "sha256/DxH4tt40L+eduF6szpY6TONlxhZhBd+pJ9wbHlQ2fuw="
+        private const val AMAZON_ROOT_CA1     = "sha256/++MBgDH5WGvL9Bcn5Be30cRcL0f5O+NyoXuWtQdX1aI="
+
+        fun buildPinner(): CertificatePinner = CertificatePinner.Builder()
+            .add(apiHost, AMAZON_INTERMEDIATE, AMAZON_ROOT_CA1)
+            .build()
     }
 }
