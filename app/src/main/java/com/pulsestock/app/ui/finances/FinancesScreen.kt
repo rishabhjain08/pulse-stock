@@ -8,7 +8,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -1036,6 +1038,7 @@ private fun CategoryPickerSheet(
     onDismiss: () -> Unit,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
+    var showAutoDetectHint by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -1043,12 +1046,22 @@ private fun CategoryPickerSheet(
     val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
     val effectiveCat = transaction?.effectiveCategory ?: "OTHER"
     val hasOverride = transaction?.categoryOverride != null
+
+    // Selected floats to top; rest sorted alphabetically by display name
     val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
-        .sortedByDescending { it == effectiveCat }
+        .sortedWith(compareByDescending<String> { it == effectiveCat }
+            .thenBy { CategoryMeta.get(it).displayName })
 
     // Effective category not covered by either list — surface it at top of Categories
     val effectiveCatInQuickPicks = effectiveCat in quickPickCodes
     val effectiveCatInCustom = effectiveCat in trulyCustomCategories
+
+    if (showAutoDetectHint) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(2500)
+            showAutoDetectHint = false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1100,10 +1113,13 @@ private fun CategoryPickerSheet(
             Spacer(Modifier.height(8.dp))
         }
 
-        // "Categories" — Plaid quick picks; effective category floats to top.
-        // Orphan: effective category not in quick picks or custom list — show it first.
+        // "Categories" — selected floats to top, rest sorted alphabetically.
+        // Orphan: effective category not in quick picks or custom list — shown first.
         val sortedQuickPicks = remember(effectiveCat) {
-            CategoryMeta.quickPicks.sortedByDescending { it.first == effectiveCat }
+            CategoryMeta.quickPicks.sortedWith(
+                compareByDescending<Pair<String, CategoryMeta.Meta>> { it.first == effectiveCat }
+                    .thenBy { it.second.displayName }
+            )
         }
         Text(
             text = "Categories",
@@ -1117,7 +1133,7 @@ private fun CategoryPickerSheet(
                 emoji = orphanMeta.emoji,
                 label = orphanMeta.displayName,
                 selected = true,
-                onPick = { /* automatic — no override to clear */ },
+                onPick = { showAutoDetectHint = true },
             )
         }
         sortedQuickPicks.forEach { (code, meta) ->
@@ -1125,7 +1141,11 @@ private fun CategoryPickerSheet(
                 emoji = meta.emoji,
                 label = meta.displayName,
                 selected = effectiveCat == code,
-                onPick = { if (effectiveCat == code && hasOverride) onClear() else onPick(code) },
+                onPick = {
+                    if (effectiveCat == code) {
+                        if (hasOverride) onClear() else showAutoDetectHint = true
+                    } else onPick(code)
+                },
             )
         }
 
@@ -1159,6 +1179,29 @@ private fun CategoryPickerSheet(
                 enabled = customInput.isNotBlank(),
             ) {
                 Text("Add")
+            }
+        }
+
+        // Auto-hide hint when user taps an auto-detected (non-overridable) category
+        AnimatedVisibility(
+            visible = showAutoDetectHint,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.inverseSurface,
+                tonalElevation = 0.dp,
+            ) {
+                Text(
+                    text = "Auto-detected — tap another category to change it",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
             }
         }
     }
