@@ -108,6 +108,8 @@ import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -1797,8 +1799,8 @@ private fun SpendingHistorySheet(
     spendingWindow: SpendingWindow,
     currencyFmt: NumberFormat,
 ) {
-    // Single filter dialog — open/closed state only
     var filterDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var tooltipBarIndex by rememberSaveable { mutableStateOf<Int?>(null) }
 
     // Resolve colors in composable scope so we can pass them to Canvas helpers.
     val miscColor = MaterialTheme.colorScheme.outlineVariant
@@ -1840,7 +1842,19 @@ private fun SpendingHistorySheet(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 32.dp),
+            .padding(bottom = 32.dp)
+            .pointerInput(tooltipBarIndex) {
+                // Non-consuming Initial-pass intercept: any tap anywhere in the sheet
+                // dismisses the tooltip, then the event still reaches its real target.
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press && tooltipBarIndex != null) {
+                            tooltipBarIndex = null
+                        }
+                    }
+                }
+            },
     ) {
         // ── Sheet header ──────────────────────────────────────────────────────
         Row(
@@ -1920,6 +1934,8 @@ private fun SpendingHistorySheet(
                 palette = palette,
                 miscColor = miscColor,
                 currencyFmt = currencyFmt,
+                tooltipBarIndex = tooltipBarIndex,
+                onTooltipChange = { tooltipBarIndex = it },
             )
 
             Spacer(Modifier.height(8.dp))
@@ -1964,6 +1980,8 @@ private fun HistoryStackedBarChart(
     palette: List<Color>,
     miscColor: Color,
     currencyFmt: NumberFormat,
+    tooltipBarIndex: Int?,
+    onTooltipChange: (Int?) -> Unit,
 ) {
     val monthSlots = remember { last12MonthSlots() }
 
@@ -1976,13 +1994,17 @@ private fun HistoryStackedBarChart(
 
     val density = LocalDensity.current
     val barSlotDp = 36.dp
-    val barWidthDp = 24.dp
+    val barWidthDp = 22.dp
     val chartHeightDp = 160.dp
     val yAxisWidthDp = 44.dp
+    val edgePaddingDp = 8.dp
     val barSlotPx = with(density) { barSlotDp.toPx() }
     val barWidthPx = with(density) { barWidthDp.toPx() }
     val chartHeightPx = with(density) { chartHeightDp.toPx() }
-    val totalContentWidthPx = barSlotPx * 12
+    val edgePaddingPx = with(density) { edgePaddingDp.toPx() }
+    // Each bar is centered within its slot; startPadding = offset from slot-left to bar-left
+    val startPadding = (barSlotPx - barWidthPx) / 2f
+    val totalContentWidthPx = barSlotPx * 12 + edgePaddingPx * 2
 
     val rawMaxMonthTotal = remember(monthSlots, dataByMonth, merchantDataByMonth, historySelectedCategories, historySelectedMerchants) {
         monthSlots.maxOfOrNull { slot ->
@@ -1999,8 +2021,6 @@ private fun HistoryStackedBarChart(
     val gridValues = remember(rawMaxMonthTotal) { buildGridValues(rawMaxMonthTotal) }
     val maxMonthTotal = gridValues.last()
 
-    var tooltipBarIndex by rememberSaveable { mutableStateOf<Int?>(null) }
-
     val panOffset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val decay = rememberSplineBasedDecay<Float>()
@@ -2009,9 +2029,12 @@ private fun HistoryStackedBarChart(
     fun clampOffset(offset: Float, width: Float): Float =
         offset.coerceIn(-(totalContentWidthPx - width).coerceAtLeast(0f), 0f)
 
+    // Set Animatable bounds so fling cannot overshoot past first/last bar
     LaunchedEffect(canvasWidthPx) {
         if (canvasWidthPx > 0f) {
-            panOffset.snapTo(clampOffset(-(totalContentWidthPx - canvasWidthPx), canvasWidthPx))
+            val minOff = -(totalContentWidthPx - canvasWidthPx).coerceAtLeast(0f)
+            panOffset.updateBounds(minOff, 0f)
+            panOffset.snapTo(minOff) // start with newest months visible on right
         }
     }
 
@@ -2022,6 +2045,7 @@ private fun HistoryStackedBarChart(
     val onSurfaceColor = MaterialTheme.colorScheme.onSurface
 
     Box(modifier = Modifier.fillMaxWidth()) {
+        // Y-axis labels (static, not clipped by chart scroll)
         Box(
             modifier = Modifier
                 .width(yAxisWidthDp)
@@ -2055,6 +2079,7 @@ private fun HistoryStackedBarChart(
             }
         }
 
+        // Pannable chart area
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2065,37 +2090,35 @@ private fun HistoryStackedBarChart(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         velocityTracker.resetTracking()
                         velocityTracker.addPosition(down.uptimeMillis, down.position)
-                        var dragOccurred = false
+                        var totalDragPx = 0f
                         drag(down.id) { change ->
                             velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            val delta = change.position.x - change.previousPosition.x
-                            if (kotlin.math.abs(delta) > 0f) dragOccurred = true
+                            val delta = (change.position - change.previousPosition).x
+                            totalDragPx += kotlin.math.abs(delta)
                             val newOff = clampOffset(panOffset.value + delta, canvasWidthPx)
                             scope.launch { panOffset.snapTo(newOff) }
                             change.consume()
                         }
-                        if (!dragOccurred) {
+                        if (totalDragPx <= viewConfiguration.touchSlop) {
+                            // Tap: find bar under finger
                             val tapX = down.position.x
                             val tapY = down.position.y
                             if (tapY <= chartHeightPx) {
-                                val startPadding = barSlotPx - barWidthPx
-                                val rawIndex = ((tapX - startPadding - panOffset.value) / barSlotPx).toInt()
+                                val rawIndex = ((tapX - edgePaddingPx - startPadding - panOffset.value) / barSlotPx).toInt()
                                 val tappedIndex = rawIndex.coerceIn(0, 11)
-                                val barLeft = tappedIndex * barSlotPx + panOffset.value + startPadding
+                                val barLeft = edgePaddingPx + tappedIndex * barSlotPx + panOffset.value + startPadding
                                 if (tapX >= barLeft && tapX <= barLeft + barWidthPx) {
-                                    tooltipBarIndex = if (tooltipBarIndex == tappedIndex) null else tappedIndex
+                                    onTooltipChange(if (tooltipBarIndex == tappedIndex) null else tappedIndex)
                                 } else {
-                                    tooltipBarIndex = null
+                                    onTooltipChange(null)
                                 }
                             } else {
-                                tooltipBarIndex = null
+                                onTooltipChange(null)
                             }
                         } else {
+                            // Fling — bounds already set on Animatable, no manual clamp needed
                             val velocity = velocityTracker.calculateVelocity().x
-                            scope.launch {
-                                panOffset.animateDecay(velocity, decay)
-                                panOffset.snapTo(clampOffset(panOffset.value, canvasWidthPx))
-                            }
+                            scope.launch { panOffset.animateDecay(velocity, decay) }
                         }
                     }
                 },
@@ -2106,7 +2129,6 @@ private fun HistoryStackedBarChart(
                     .onSizeChanged { canvasWidthPx = it.width.toFloat() },
             ) {
                 val chartH = chartHeightPx
-                val startPadding = barSlotPx - barWidthPx
 
                 gridValues.forEach { value ->
                     val y = chartH - (value / maxMonthTotal * chartH).toFloat()
@@ -2119,9 +2141,8 @@ private fun HistoryStackedBarChart(
                 }
 
                 monthSlots.forEachIndexed { index, slot ->
-                    val barLeft = index * barSlotPx + panOffset.value + startPadding
+                    val barLeft = edgePaddingPx + index * barSlotPx + panOffset.value + startPadding
                     val barRight = barLeft + barWidthPx
-
                     if (barRight < 0f || barLeft > size.width) return@forEachIndexed
 
                     val monthData = dataByMonth[slot]
@@ -2134,7 +2155,6 @@ private fun HistoryStackedBarChart(
                         )
                         val totalHeight = segments.sumOf { it.amount }
                         var currentY = chartH
-
                         segments.forEach { seg ->
                             val segH = if (totalHeight > 0)
                                 (seg.amount / maxMonthTotal * chartH).toFloat()
@@ -2167,6 +2187,7 @@ private fun HistoryStackedBarChart(
                 }
             }
 
+            // Tooltip — clamped so it never overflows the left or right edge
             tooltipBarIndex?.let { idx ->
                 if (idx in 0..11) {
                     val slot = monthSlots[idx]
@@ -2179,23 +2200,29 @@ private fun HistoryStackedBarChart(
                             colorMap, miscColor, allHistoryCategories, palette,
                         )
                         val tooltipTotal = segments.sumOf { it.amount }
-                        val startPaddingDp = barSlotDp - barWidthDp
-                        val barLeftDp = with(density) { (idx * barSlotPx + panOffset.value + startPaddingDp.toPx()).toDp() }
+                        val tooltipMaxWidthDp = 200.dp
+                        val chartWidthDp = with(density) { canvasWidthPx.toDp() }
+                        val rawBarLeftDp = with(density) {
+                            (edgePaddingPx + idx * barSlotPx + panOffset.value + startPadding).toDp()
+                        }
+                        // Clamp so tooltip stays fully within chart bounds
+                        val clampedX = rawBarLeftDp.coerceIn(
+                            0.dp,
+                            (chartWidthDp - tooltipMaxWidthDp).coerceAtLeast(0.dp),
+                        )
 
                         AnimatedVisibility(
                             visible = true,
                             enter = fadeIn(),
                             exit = fadeOut(),
-                            modifier = Modifier
-                                .offset(x = barLeftDp)
-                                .wrapContentWidth(unbounded = true),
+                            modifier = Modifier.offset(x = clampedX),
                         ) {
                             Surface(
                                 shape = MaterialTheme.shapes.small,
                                 color = MaterialTheme.colorScheme.surfaceContainerHighest,
                                 tonalElevation = 2.dp,
                                 modifier = Modifier
-                                    .requiredWidthIn(min = 140.dp, max = 200.dp)
+                                    .requiredWidthIn(min = 140.dp, max = tooltipMaxWidthDp)
                                     .padding(bottom = chartHeightDp - (tooltipTotal / maxMonthTotal * chartHeightDp.value).dp + 8.dp),
                             ) {
                                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
