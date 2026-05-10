@@ -1915,7 +1915,10 @@ private fun SpendingHistorySheet(
         Spacer(Modifier.height(16.dp))
 
         // ── Stacked bar chart ─────────────────────────────────────────────────
-        if (spendingHistoryByMonth.isNotEmpty()) {
+        if (allCreditAccounts.isNotEmpty()) {
+            // Always render the 12-month grid. Months with no data (or filtered-out
+            // accounts/merchants) simply draw no bars — same behaviour as unselecting
+            // all merchants, which the user confirmed they prefer over hiding the chart.
             HistoryStackedBarChart(
                 spendingHistoryByMonth = spendingHistoryByMonth,
                 spendingHistoryByMonthAndMerchant = spendingHistoryByMonthAndMerchant,
@@ -1932,8 +1935,6 @@ private fun SpendingHistorySheet(
 
             Spacer(Modifier.height(8.dp))
 
-            // Legend: color dot + category name for every key in colorMap that has
-            // non-zero spend in the currently visible data. "Misc" always last.
             HistoryChartLegend(
                 colorMap = colorMap,
                 allHistoryCategories = allHistoryCategories,
@@ -1941,10 +1942,7 @@ private fun SpendingHistorySheet(
                 historySelectedMerchants = historySelectedMerchants,
                 topMerchantsForHistory = topMerchantsForHistory,
             )
-
-            // Filter summary text removed — header badges replace it.
         } else {
-            // Empty state when no history loaded yet
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
