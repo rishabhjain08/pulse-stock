@@ -85,6 +85,8 @@ data class FinancesUiState(
     val isBulkPickerOpen: Boolean = false,
     // All-transactions mode: show every credit tx for the window, not filtered by category
     val allTransactionsMode: Boolean = false,
+    // Transaction IDs recategorized in the current Manage session (reset when sheet closes)
+    val sessionCategorizedIds: Set<String> = emptySet(),
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -375,6 +377,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             isBulkMode = false,
             bulkSelectedIds = emptySet(),
             isBulkPickerOpen = false,
+            sessionCategorizedIds = emptySet(),
         )
     }
 
@@ -505,6 +508,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 drillDownTransactions = newTxns,
                 pendingMerchantRule = proposals.firstOrNull(),
                 pendingMerchantRuleQueue = proposals.drop(1),
+                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds,
             )
         }
     }

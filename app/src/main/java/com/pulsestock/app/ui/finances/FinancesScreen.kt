@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -149,6 +150,7 @@ fun FinancesScreen(
                 isBulkMode = state.isBulkMode,
                 isAllTransactionsMode = state.allTransactionsMode,
                 bulkSelectedIds = state.bulkSelectedIds,
+                sessionCategorizedIds = state.sessionCategorizedIds,
                 onEnterBulkMode = vm::enterBulkMode,
                 onExitBulkMode = vm::exitBulkMode,
                 onToggleBulkSelection = vm::toggleBulkSelection,
@@ -656,7 +658,7 @@ private fun CategoryBreakdownCard(
                     ),
                 ),
         ) {
-            // Header row: title + manage button + time-period dropdown
+            // Header row: title | [tune icon] [window dropdown]
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -670,13 +672,15 @@ private fun CategoryBreakdownCard(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (breakdown.isNotEmpty()) {
-                        TextButton(
+                        IconButton(
                             onClick = onManage,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.size(32.dp),
                         ) {
-                            Text(
-                                text = "Manage",
-                                style = MaterialTheme.typography.labelMedium,
+                            Icon(
+                                imageVector = Icons.Outlined.Tune,
+                                contentDescription = "Manage transactions",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -978,6 +982,7 @@ private fun CategoryDrillDownSheet(
     isBulkMode: Boolean = false,
     isAllTransactionsMode: Boolean = false,
     bulkSelectedIds: Set<String> = emptySet(),
+    sessionCategorizedIds: Set<String> = emptySet(),
     onEnterBulkMode: () -> Unit = {},
     onExitBulkMode: () -> Unit = {},
     onToggleBulkSelection: (String) -> Unit = {},
@@ -1004,10 +1009,7 @@ private fun CategoryDrillDownSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (isBulkMode) {
-                    // Bulk mode: X dismisses sheet, title shows count or "All Transactions"
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
+                    // Bulk mode: title left, X right — natural dismiss gesture
                     Text(
                         text = when {
                             bulkSelectedIds.isNotEmpty() -> "${bulkSelectedIds.size} selected"
@@ -1019,7 +1021,9 @@ private fun CategoryDrillDownSheet(
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = onDismiss) { Text("Done") }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
                 } else {
                     Box(
                         modifier = Modifier
@@ -1051,8 +1055,14 @@ private fun CategoryDrillDownSheet(
             // ── Transaction rows ───────────────────────────────────────────────
             transactions.forEach { tx ->
                 val isSelected = tx.transactionId in bulkSelectedIds
+                val isTouched = isAllTransactionsMode && tx.transactionId in sessionCategorizedIds
+                val rowBgTouched = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
                 val rowBg by animateColorAsState(
-                    if (isBulkMode && isSelected) rowBgSelected else rowBgDefault,
+                    when {
+                        isBulkMode && isSelected -> rowBgSelected
+                        isTouched -> rowBgTouched
+                        else -> rowBgDefault
+                    },
                     label = "row_bg",
                 )
                 Row(
@@ -1117,6 +1127,14 @@ private fun CategoryDrillDownSheet(
                         modifier = Modifier.padding(end = if (isBulkMode) 0.dp else 4.dp),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    if (isTouched) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Recategorized",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
                     if (!isBulkMode) {
                         IconButton(onClick = { onEditCategory(tx) }) {
                             Icon(
