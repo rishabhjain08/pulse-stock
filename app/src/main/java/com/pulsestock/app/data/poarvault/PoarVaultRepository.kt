@@ -7,6 +7,16 @@ import kotlinx.coroutines.flow.flowOf
 import java.time.LocalDate
 
 /**
+ * One row from the monthly spending history query: the year-month bucket, one category code,
+ * and the summed amount for that bucket. The ViewModel aggregates these into display groups.
+ */
+data class MonthlySpendRow(
+    val month: String,             // "yyyy-MM"
+    val effectiveCategory: String,
+    val totalAmount: Double,
+)
+
+/**
  * Returned after setting a single-transaction override when Plaid knows the merchant name.
  * The ViewModel uses this to prompt the user: "Apply to [otherCount] other transactions?"
  */
@@ -59,6 +69,7 @@ class PoarVaultRepository(
     suspend fun refreshInstitution(institutionId: String) {
         val token = tokens.getAccessToken(institutionId) ?: return
         val balances = api.getBalances(token)
+        val now = System.currentTimeMillis()
         val accounts = balances.accounts.map { a ->
             AccountEntity(
                 accountId = a.accountId,
@@ -69,10 +80,23 @@ class PoarVaultRepository(
                 currentBalance = a.balances.current,
                 availableBalance = a.balances.available,
                 currencyCode = a.balances.isoCurrencyCode,
-                lastRefreshed = System.currentTimeMillis(),
+                lastRefreshed = now,
             )
         }
         db.dao().upsertAccounts(accounts)
+        // Write a balance snapshot for each credit account so the history sheet has
+        // current-balance data even before liabilities load. statementBalance is null here
+        // and gets filled in by refreshLiabilities if available.
+        accounts.filter { it.type == "credit" }.forEach { account ->
+            db.dao().insertBalanceSnapshot(
+                BalanceSnapshot(
+                    accountId = account.accountId,
+                    capturedAt = now,
+                    statementBalance = null,
+                    currentBalance = account.currentBalance,
+                )
+            )
+        }
     }
 
     suspend fun refreshLiabilities(institutionId: String) {
@@ -84,6 +108,7 @@ class PoarVaultRepository(
         val resp = api.getLiabilities(token)
         val creditCount = resp.liabilities.credit?.size ?: 0
         PulseLog.d("PoarVaultRepo", "refreshLiabilities: $creditCount credit liability item(s)")
+        val liabilityCapturedAt = System.currentTimeMillis()
         resp.liabilities.credit?.forEach { liability ->
             PulseLog.d("PoarVaultRepo", "refreshLiabilities: accountId=${liability.accountId} statementBal=${liability.lastStatementBalance} statementDate=${liability.lastStatementIssueDate} dueDate=${liability.nextPaymentDueDate}")
             db.dao().updateLiability(
@@ -93,7 +118,92 @@ class PoarVaultRepository(
                 dueDate = liability.nextPaymentDueDate,
                 statementDate = liability.lastStatementIssueDate,
             )
+            // Write a snapshot with statementBalance populated (currentBalance from the
+            // accounts list in the liabilities response, if available). Monthly aggregation
+            // uses MAX(capturedAt) per account per month, so the liabilities snapshot —
+            // written seconds after the balances snapshot — will be the one surfaced.
+            val currentBal = resp.accounts.find { it.accountId == liability.accountId }?.balances?.current
+            db.dao().insertBalanceSnapshot(
+                BalanceSnapshot(
+                    accountId = liability.accountId,
+                    capturedAt = liabilityCapturedAt,
+                    statementBalance = liability.lastStatementBalance,
+                    currentBalance = currentBal,
+                )
+            )
         }
+    }
+
+    // ── Balance snapshot history ──────────────────────────────────────────────
+
+    /**
+     * Returns a Flow of all snapshots for [accountIds] captured within the last 12 months.
+     * The ViewModel groups these by calendar month and takes the latest per account per month.
+     */
+    fun watchSnapshotsForAccounts(accountIds: List<String>): Flow<List<BalanceSnapshot>> {
+        if (accountIds.isEmpty()) return flowOf(emptyList())
+        val twelveMonthsAgoMillis = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.MONTH, -12)
+        }.timeInMillis
+        return db.dao().getSnapshotsForAccounts(accountIds, twelveMonthsAgoMillis)
+    }
+
+    // ── Spending history ──────────────────────────────────────────────────────
+
+    /**
+     * One-shot query: returns all spending rows for the last 12 months grouped by
+     * (month, effectiveCategory) for the given account IDs. Called from the ViewModel
+     * whenever the relevant state changes.
+     */
+    suspend fun getMonthlySpendingHistory(accountIds: List<String>): List<MonthlySpendRow> {
+        return getMonthlySpendingHistoryWithRaw(accountIds).first
+    }
+
+    /**
+     * Same as [getMonthlySpendingHistory] but also returns the raw [PlaidTransaction] list in
+     * a single fetch. The ViewModel uses the raw list to derive merchant-level aggregates without
+     * a second database round-trip.
+     *
+     * Returns (categoryRows, rawTransactions).
+     */
+    suspend fun getMonthlySpendingHistoryWithRaw(
+        accountIds: List<String>,
+    ): Pair<List<MonthlySpendRow>, List<PlaidTransaction>> {
+        if (accountIds.isEmpty()) return Pair(emptyList(), emptyList())
+        val query = buildMonthlySpendingQuery(accountIds)
+        val txns = db.dao().getTransactionsForCategoryRaw(query)
+        val rows = txns
+            .groupBy { tx -> tx.date.take(7) } // "yyyy-MM"
+            .flatMap { (monthStr, monthTxns) ->
+                monthTxns.groupBy { tx ->
+                    tx.categoryOverride ?: tx.pfcDetailed ?: tx.pfcPrimary ?: tx.category ?: "OTHER"
+                }.map { (cat, catTxns) ->
+                    MonthlySpendRow(
+                        month = monthStr,
+                        effectiveCategory = cat,
+                        totalAmount = catTxns.sumOf { it.amount },
+                    )
+                }
+            }
+        return Pair(rows, txns)
+    }
+
+    private fun buildMonthlySpendingQuery(accountIds: List<String>): SimpleSQLiteQuery {
+        // Fetch all transactions for the given accounts over the last 12 months.
+        // Category grouping is done in Kotlin after fetch to reuse the effectiveCategory
+        // priority chain without duplicating complex SQL COALESCE logic.
+        val placeholders = accountIds.joinToString(",") { "?" }
+        val twelveMonthsAgo = java.time.LocalDate.now().minusDays(364).toString()
+        val sql = """
+            SELECT pt.* FROM plaid_transactions pt
+            INNER JOIN accounts a ON pt.accountId = a.accountId
+            WHERE a.type = 'credit'
+              AND pt.accountId IN ($placeholders)
+              AND pt.date >= ?
+            ORDER BY pt.date DESC
+        """.trimIndent()
+        val args = (accountIds + listOf(twelveMonthsAgo)).toTypedArray()
+        return SimpleSQLiteQuery(sql, args)
     }
 
     // ── Category breakdown ────────────────────────────────────────────────────
@@ -175,7 +285,7 @@ class PoarVaultRepository(
             return
         }
         val endDate = LocalDate.now().toString()
-        val startDate = LocalDate.now().minusDays(89).toString()
+        val startDate = LocalDate.now().minusDays(364).toString()
         PulseLog.d("PoarVaultRepo", "refreshTransactions: fetching $institutionId $startDate → $endDate")
         val resp = api.getTransactions(token, startDate, endDate)
         PulseLog.d("PoarVaultRepo", "refreshTransactions: total=${resp.totalTransactions} returned=${resp.transactions.size}")

@@ -14,25 +14,36 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -45,6 +56,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
@@ -66,7 +80,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -89,11 +105,15 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +126,7 @@ import com.pulsestock.app.data.poarvault.AccountEntity
 import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.effectiveCategory
+import com.pulsestock.app.data.poarvault.usesWindowHeuristic
 import java.text.NumberFormat
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -130,6 +151,17 @@ fun FinancesScreen(
         val msg = state.error ?: return@LaunchedEffect
         snackbarState.showSnackbar(msg)
         vm.dismissError()
+    }
+
+    // One-shot: show a Short snackbar when the ViewModel auto-excluded business CCs
+    // because the user picked a statement-anchored spending window.
+    LaunchedEffect(state.pendingBusinessCardSnackbar) {
+        if (!state.pendingBusinessCardSnackbar) return@LaunchedEffect
+        vm.clearBusinessCardSnackbar()
+        snackbarState.showSnackbar(
+            message = "Business card statement unknown — select Last 30 Days or Custom",
+            duration = SnackbarDuration.Short,
+        )
     }
 
     // Category drill-down sheet — also shown when allTransactionsMode is active
@@ -260,26 +292,59 @@ fun FinancesScreen(
                     item {
                         FinancesSectionLabel("Credit Cards")
                     }
-                    items(state.creditAccounts, key = { it.accountId }) { account ->
-                        CreditCardSummaryCard(account, currencyFmt)
-                    }
-                    if (state.isSplitwiseConnected) {
-                        item {
-                            FilterChip(
-                                selected = state.includeReimbursements,
-                                onClick = vm::toggleIncludeReimbursements,
-                                label = { Text("Subtract Splitwise") },
-                                modifier = Modifier.padding(horizontal = 0.dp),
-                            )
-                        }
-                    }
                     item {
-                        CreditCardTotalsRow(
-                            accounts = state.creditAccounts,
-                            reimbursable = state.currentMonthReimbursable,
-                            includeReimbursements = state.includeReimbursements,
-                            currencyFmt = currencyFmt,
-                        )
+                        // Outer container card: surfaceContainerLow + shapes.large groups all
+                        // CC sub-cards, the totals row, and the Splitwise chip into one visual unit.
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                // ── Per-account sub-cards ─────────────────────────────
+                                state.creditAccounts.forEach { account ->
+                                    CreditCardSummaryCard(
+                                        account = account,
+                                        isBusinessCard = account.usesWindowHeuristic,
+                                        currencyFmt = currencyFmt,
+                                    )
+                                }
+
+                                // ── Divider before aggregate totals ──────────────────
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                    modifier = Modifier.padding(horizontal = 4.dp),
+                                )
+
+                                // ── Aggregate totals (two columns only — no empty third) ──
+                                CreditCardTotalsRow(
+                                    accounts = state.creditAccounts,
+                                    reimbursable = state.currentMonthReimbursable,
+                                    includeReimbursements = state.includeReimbursements,
+                                    currencyFmt = currencyFmt,
+                                )
+
+                                // ── Splitwise FilterChip (only when connected) ─────────
+                                if (state.isSplitwiseConnected) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                        modifier = Modifier.padding(horizontal = 4.dp),
+                                    )
+                                    FilterChip(
+                                        selected = state.includeReimbursements,
+                                        onClick = vm::toggleIncludeReimbursements,
+                                        label = { Text("Subtract Splitwise reimbursable") },
+                                        modifier = Modifier.padding(horizontal = 4.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                     item {
                         CategoryBreakdownCard(
@@ -293,6 +358,17 @@ fun FinancesScreen(
                             onCategoryTap = vm::openCategoryDrillDown,
                             onManage = vm::openAllTransactionsDrillDown,
                             currencyFmt = currencyFmt,
+                            spendingHistoryByMonth = state.spendingHistoryByMonth,
+                            spendingHistoryByMonthAndMerchant = state.spendingHistoryByMonthAndMerchant,
+                            allHistoryCategories = state.allHistoryCategories,
+                            topMerchantsForHistory = state.topMerchantsForHistory,
+                            historySelectedCategories = state.historySelectedCategories,
+                            historySelectedMerchants = state.historySelectedMerchants,
+                            onSetHistoryCategoryFilter = vm::setHistoryCategoryFilter,
+                            onSetHistoryMerchantFilter = vm::setHistoryMerchantFilter,
+                            onClearHistoryFilters = vm::clearHistoryFilters,
+                            balanceSnapshotsByMonth = state.balanceSnapshotsByMonth,
+                            selectedAccountNames = state.effectiveSpendingAccounts.map { it.name },
                         )
                     }
                 }
@@ -418,21 +494,29 @@ private fun ReconcileEntryCard(count: Int, onClick: () -> Unit) {
 
 // ── Credit card summary card ──────────────────────────────────────────────────
 
+/**
+ * Per-account summary card rendered inside the unified CC outer card.
+ *
+ * [isBusinessCard] is true when Plaid supplies no statement cycle dates
+ * (lastStatementDate == null && nextDueDate == null). Business CCs only show
+ * the Current column — Statement and Due Date are hidden because Plaid does not
+ * report them for this card type (not because the data is unavailable or estimated).
+ */
 @Composable
-internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFormat) {
-    // surfaceContainerLow gives gentle tonal lift above the page background.
-    // tonalElevation = 1.dp on Card uses the M3 elevation overlay for tinting —
-    // no drop shadow. Using the ElevatedCard shape convention (shapes.medium = 12dp
-    // for list-level cards per this project's convention).
+internal fun CreditCardSummaryCard(
+    account: AccountEntity,
+    isBusinessCard: Boolean,
+    currencyFmt: NumberFormat,
+) {
+    // Inner sub-cards use surfaceContainerHigh to lift visually above the
+    // surfaceContainerLow outer card. shapes.medium (12dp) = list-level card standard.
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 0.dp,
-        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -443,13 +527,17 @@ internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFo
             )
             Spacer(Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                LabeledAmount(
-                    label = "Statement",
-                    amount = account.statementBalance,
-                    currencyFmt = currencyFmt,
-                    amountStyle = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
-                )
+                if (!isBusinessCard) {
+                    // Standard CC: show Statement balance in the first column.
+                    LabeledAmount(
+                        label = "Statement",
+                        amount = account.statementBalance,
+                        currencyFmt = currencyFmt,
+                        amountStyle = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                // Current balance is always shown regardless of card type.
                 LabeledAmount(
                     label = "Current",
                     amount = account.currentBalance,
@@ -457,19 +545,22 @@ internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFo
                     amountStyle = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Due Date",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = account.nextDueDate ?: "—",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                if (!isBusinessCard) {
+                    // Standard CC: Due Date in the third column.
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Due Date",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = account.nextDueDate ?: "—",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
             }
         }
@@ -478,6 +569,12 @@ internal fun CreditCardSummaryCard(account: AccountEntity, currencyFmt: NumberFo
 
 // ── Credit card totals row ────────────────────────────────────────────────────
 
+/**
+ * Aggregate totals row rendered inside the unified CC outer card.
+ * Two columns only — Statement and Current. The empty third column is dropped;
+ * Due Date is per-account and has no meaningful aggregate. reimbursable is always
+ * currentMonthReimbursable (the live current-month value, not the browsed month).
+ */
 @Composable
 private fun CreditCardTotalsRow(
     accounts: List<AccountEntity>,
@@ -490,34 +587,28 @@ private fun CreditCardTotalsRow(
     val totalCurrent = accounts.sumOf { it.currentBalance ?: 0.0 }
     val statementDisplay = if (includeReimbursements) totalStatement?.minus(reimbursable) else totalStatement
     val currentDisplay = if (includeReimbursements) totalCurrent - reimbursable else totalCurrent
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    // No Card wrapper — the outer CC card provides the visual container.
+    // Padding matches the inner sub-cards' horizontal padding for alignment.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        if (hasStatements) {
             LabeledAmount(
                 label = if (includeReimbursements) "Net Statement" else "Total Statement",
                 amount = statementDisplay,
                 currencyFmt = currencyFmt,
                 modifier = Modifier.weight(1f),
             )
-            LabeledAmount(
-                label = if (includeReimbursements) "Net Current" else "Total Current",
-                amount = currentDisplay,
-                currencyFmt = currencyFmt,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.weight(1f))
         }
+        LabeledAmount(
+            label = if (includeReimbursements) "Net Current" else "Total Current",
+            amount = currentDisplay,
+            currencyFmt = currencyFmt,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -625,6 +716,7 @@ private fun String.shortCardName(): String {
     return parts.take(2).joinToString(" ").ifEmpty { this }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CategoryBreakdownCard(
     breakdown: List<CategorySpend>,
@@ -637,9 +729,47 @@ private fun CategoryBreakdownCard(
     onCategoryTap: (String) -> Unit,
     onManage: () -> Unit,
     currencyFmt: NumberFormat,
+    spendingHistoryByMonth: List<MonthlySpendingHistory>,
+    spendingHistoryByMonthAndMerchant: List<MonthlyMerchantHistory>,
+    allHistoryCategories: List<CategoryAmount>,
+    topMerchantsForHistory: List<MerchantSpendSummary>,
+    historySelectedCategories: Set<String>?,
+    historySelectedMerchants: Set<String>?,
+    onSetHistoryCategoryFilter: (Set<String>?) -> Unit,
+    onSetHistoryMerchantFilter: (Set<String>?) -> Unit,
+    onClearHistoryFilters: () -> Unit,
+    balanceSnapshotsByMonth: List<MonthlyBalanceSnapshot>,
+    selectedAccountNames: List<String>,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var showHistorySheet by rememberSaveable { mutableStateOf(false) }
     val displayList = if (expanded || breakdown.size <= 4) breakdown else breakdown.take(4)
+
+    // History sheet — only rendered when triggered via the BarChart icon
+    if (showHistorySheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showHistorySheet = false },
+            sheetState = sheetState,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            SpendingHistorySheet(
+                spendingHistoryByMonth = spendingHistoryByMonth,
+                spendingHistoryByMonthAndMerchant = spendingHistoryByMonthAndMerchant,
+                allHistoryCategories = allHistoryCategories,
+                topMerchantsForHistory = topMerchantsForHistory,
+                historySelectedCategories = historySelectedCategories,
+                historySelectedMerchants = historySelectedMerchants,
+                onSetHistoryCategoryFilter = onSetHistoryCategoryFilter,
+                onSetHistoryMerchantFilter = onSetHistoryMerchantFilter,
+                onClearHistoryFilters = onClearHistoryFilters,
+                selectedAccountNames = selectedAccountNames,
+                currencyFmt = currencyFmt,
+            )
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -683,6 +813,18 @@ private fun CategoryBreakdownCard(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    }
+                    // History sheet entry point — same visual weight as the Tune icon
+                    IconButton(
+                        onClick = { showHistorySheet = true },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.BarChart,
+                            contentDescription = "Spending and balance history",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     SpendingWindowDropdown(selected = spendingWindow, onSelect = onWindowChange)
                 }
@@ -1497,6 +1639,896 @@ private fun CategoryPickerRow(
             }
         }
     }
+}
+
+// ── Spending History Sheet (stacked bar chart) ────────────────────────────────
+
+// M3-token-anchored palette for top-5 categories. These are stable Color values derived
+// from M3 seed colors. We cannot use MaterialTheme tokens inside Canvas drawscope, so
+// we resolve them once in the Composable scope and pass them to the draw functions.
+private val historyBarPalette = listOf(
+    Color(0xFF6750A4), // primary-ish (purple)
+    Color(0xFF0286C2), // tertiary-ish (teal-blue)
+    Color(0xFF00897B), // secondary-ish (teal-green)
+    Color(0xFFE65100), // error-ish (orange)
+    Color(0xFF558B2F), // on-surface-variant-ish (green)
+)
+
+// Short month label formatter, e.g. "Apr 25"
+private val barMonthFmt = DateTimeFormatter.ofPattern("MMM yy")
+
+/**
+ * Builds the color-assignment map for the chart.
+ *
+ * When [selectedCategories] is null (all selected), the top-5 categories by 12-month spend
+ * get distinct palette colors; remaining categories group into the "Misc" bucket colored
+ * with [miscColor]. When an explicit selection is active, colors are reassigned fresh from
+ * palette to the selected categories and Misc disappears.
+ *
+ * Returns: Map<effectiveCategory or "Misc" → Color>
+ */
+private fun buildHistoryColorMap(
+    allCategories: List<CategoryAmount>,
+    selectedCategories: Set<String>?,
+    palette: List<Color>,
+    miscColor: Color,
+): Map<String, Color> {
+    val categories = if (selectedCategories == null) {
+        allCategories
+    } else {
+        allCategories.filter { it.effectiveCategory in selectedCategories }
+    }
+    val top5 = categories.take(5)
+    val result = mutableMapOf<String, Color>()
+    top5.forEachIndexed { i, cat -> result[cat.effectiveCategory] = palette[i % palette.size] }
+    if (selectedCategories == null && categories.size > 5) {
+        result["Misc"] = miscColor
+    }
+    return result
+}
+
+/**
+ * Builds per-bar segment data for a single month.
+ *
+ * When no merchant filter is active, groups by category. When a merchant filter is active,
+ * re-aggregates from the merchant history and assigns each selected merchant its own color
+ * slice, dropping the Misc bucket entirely.
+ *
+ * [colorMap] maps category key → Color; for merchant mode we build a merchant→Color map
+ * inline using the same palette.
+ *
+ * Returns List<Pair<label, amount, Color>> for each segment, bottom to top.
+ */
+private data class BarSegment(val label: String, val amount: Double, val color: Color)
+
+private fun buildBarSegments(
+    monthHistory: MonthlySpendingHistory,
+    monthMerchantHistory: MonthlyMerchantHistory?,
+    selectedCategories: Set<String>?,
+    selectedMerchants: Set<String>?,
+    colorMap: Map<String, Color>,
+    miscColor: Color,
+    allCategories: List<CategoryAmount>,
+    palette: List<Color>,
+): List<BarSegment> {
+    // Merchant filter active — group by merchant name
+    if (selectedMerchants != null && monthMerchantHistory != null) {
+        val merchantColorMap = mutableMapOf<String, Color>()
+        val filteredMerchants = monthMerchantHistory.merchants
+            .filter { it.merchantName in selectedMerchants }
+        filteredMerchants.forEachIndexed { i, m ->
+            merchantColorMap[m.merchantName] = palette[i % palette.size]
+        }
+        return filteredMerchants.map { m ->
+            BarSegment(m.merchantName, m.totalAmount, merchantColorMap[m.merchantName] ?: miscColor)
+        }
+    }
+
+    // Category filter or no filter — group by effectiveCategory
+    val topCategoryKeys = allCategories.take(5).map { it.effectiveCategory }.toSet()
+    val segments = mutableListOf<BarSegment>()
+    var miscTotal = 0.0
+
+    monthHistory.categories.forEach { cat ->
+        val isSelected = selectedCategories == null || cat.effectiveCategory in selectedCategories
+        if (!isSelected) return@forEach
+
+        val color = colorMap[cat.effectiveCategory]
+        if (color != null) {
+            segments.add(BarSegment(
+                label = CategoryMeta.get(cat.effectiveCategory).displayName,
+                amount = cat.totalAmount,
+                color = color,
+            ))
+        } else if (selectedCategories == null) {
+            // Not in top-5 and no explicit filter → group into Misc
+            miscTotal += cat.totalAmount
+        }
+    }
+
+    if (miscTotal > 0.0 && selectedCategories == null) {
+        segments.add(BarSegment("Misc", miscTotal, miscColor))
+    }
+
+    return segments
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpendingHistorySheet(
+    spendingHistoryByMonth: List<MonthlySpendingHistory>,
+    spendingHistoryByMonthAndMerchant: List<MonthlyMerchantHistory>,
+    allHistoryCategories: List<CategoryAmount>,
+    topMerchantsForHistory: List<MerchantSpendSummary>,
+    historySelectedCategories: Set<String>?,
+    historySelectedMerchants: Set<String>?,
+    onSetHistoryCategoryFilter: (Set<String>?) -> Unit,
+    onSetHistoryMerchantFilter: (Set<String>?) -> Unit,
+    onClearHistoryFilters: () -> Unit,
+    selectedAccountNames: List<String>,
+    currencyFmt: NumberFormat,
+) {
+    // Dialog navigation state — local to this sheet, not in ViewModel.
+    // "category" | "merchant" | null
+    var filterDialogPage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Resolve colors in composable scope so we can pass them to Canvas helpers.
+    val miscColor = MaterialTheme.colorScheme.outlineVariant
+    val palette = historyBarPalette
+
+    val colorMap = remember(allHistoryCategories, historySelectedCategories) {
+        buildHistoryColorMap(allHistoryCategories, historySelectedCategories, palette, miscColor)
+    }
+
+    // Filter dialogs
+    if (filterDialogPage == "category") {
+        HistoryCategoryFilterDialog(
+            allCategories = allHistoryCategories,
+            selectedCategories = historySelectedCategories,
+            onConfirm = { selected ->
+                onSetHistoryCategoryFilter(selected)
+                filterDialogPage = null
+            },
+            onDismiss = { filterDialogPage = null },
+            onNavigateToMerchants = { filterDialogPage = "merchant" },
+        )
+    }
+    if (filterDialogPage == "merchant") {
+        HistoryMerchantFilterDialog(
+            allMerchants = topMerchantsForHistory,
+            selectedMerchants = historySelectedMerchants,
+            historySelectedCategories = historySelectedCategories,
+            onConfirm = { selected ->
+                onSetHistoryMerchantFilter(selected)
+                filterDialogPage = null
+            },
+            onDismiss = { filterDialogPage = null },
+            onNavigateToCategories = { filterDialogPage = "category" },
+        )
+    }
+
+    // Build active filter summary for the label below the chart
+    val hasActiveFilters = historySelectedCategories != null || historySelectedMerchants != null
+    val filterSummaryText = remember(historySelectedCategories, historySelectedMerchants, allHistoryCategories, topMerchantsForHistory) {
+        buildFilterSummaryText(historySelectedCategories, historySelectedMerchants, allHistoryCategories, topMerchantsForHistory)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 32.dp),
+    ) {
+        // ── Sheet header ──────────────────────────────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Spending History",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (selectedAccountNames.isNotEmpty()) {
+                    Text(
+                        text = selectedAccountNames.joinToString(", ") { it.shortCardName() },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            // Filter entry point — FilterList icon in trailing slot
+            IconButton(onClick = { filterDialogPage = "category" }) {
+                Icon(
+                    imageVector = Icons.Outlined.FilterList,
+                    contentDescription = "Filter spending history",
+                    tint = if (hasActiveFilters)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // ── Stacked bar chart ─────────────────────────────────────────────────
+        if (spendingHistoryByMonth.isNotEmpty()) {
+            HistoryStackedBarChart(
+                spendingHistoryByMonth = spendingHistoryByMonth,
+                spendingHistoryByMonthAndMerchant = spendingHistoryByMonthAndMerchant,
+                allHistoryCategories = allHistoryCategories,
+                historySelectedCategories = historySelectedCategories,
+                historySelectedMerchants = historySelectedMerchants,
+                colorMap = colorMap,
+                palette = palette,
+                miscColor = miscColor,
+                currencyFmt = currencyFmt,
+            )
+
+            // ── Active filter summary label + Clear inline ──────────────────
+            AnimatedVisibility(
+                visible = hasActiveFilters,
+                enter = fadeIn() + slideInVertically(),
+                exit = fadeOut() + slideOutVertically(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = filterSummaryText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = onClearHistoryFilters,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = "Clear",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+        } else {
+            // Empty state when no history loaded yet
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "No spending history yet",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Horizontally scrollable stacked bar chart.
+ *
+ * Bars are 48dp wide with 10dp gaps. Canvas height is 160dp.
+ * Y-axis labels ($1k, $2k, ...) drawn on the left side, scaled to max month total.
+ * Gridlines at each Y label.
+ * Pre-scrolled to the rightmost (newest) month on first composition.
+ *
+ * Tapping a bar shows an [AnimatedVisibility] tooltip above the tapped bar.
+ */
+@Composable
+private fun HistoryStackedBarChart(
+    spendingHistoryByMonth: List<MonthlySpendingHistory>,
+    spendingHistoryByMonthAndMerchant: List<MonthlyMerchantHistory>,
+    allHistoryCategories: List<CategoryAmount>,
+    historySelectedCategories: Set<String>?,
+    historySelectedMerchants: Set<String>?,
+    colorMap: Map<String, Color>,
+    palette: List<Color>,
+    miscColor: Color,
+    currencyFmt: NumberFormat,
+) {
+    // Bar chart is ordered oldest→newest (left→right). History comes newest-first so reverse it.
+    val orderedHistory = remember(spendingHistoryByMonth) { spendingHistoryByMonth.reversed() }
+    val orderedMerchantHistory = remember(spendingHistoryByMonthAndMerchant) {
+        spendingHistoryByMonthAndMerchant.reversed()
+    }
+    val merchantHistoryByMonth = remember(orderedMerchantHistory) {
+        orderedMerchantHistory.associateBy { it.month }
+    }
+
+    val density = LocalDensity.current
+    val barWidthDp = 48.dp
+    val gapDp = 10.dp
+    val chartHeightDp = 160.dp
+    val yAxisWidthDp = 44.dp
+    val barWidthPx = with(density) { barWidthDp.toPx() }
+    val gapPx = with(density) { gapDp.toPx() }
+    val chartHeightPx = with(density) { chartHeightDp.toPx() }
+
+    val totalCanvasWidthDp = yAxisWidthDp + (barWidthDp + gapDp) * orderedHistory.size + gapDp
+
+    // Max total across all months — determines Y-axis scale.
+    val maxMonthTotal = remember(orderedHistory, historySelectedCategories, historySelectedMerchants) {
+        orderedHistory.maxOfOrNull { month ->
+            val merchantHistory = merchantHistoryByMonth[month.month]
+            val segs = buildBarSegments(
+                month, merchantHistory, historySelectedCategories, historySelectedMerchants,
+                colorMap, miscColor, allHistoryCategories, palette,
+            )
+            segs.sumOf { it.amount }
+        } ?: 1.0
+    }
+
+    // Gridline values: 3–4 nice round levels from 0 to maxMonthTotal
+    val gridValues = remember(maxMonthTotal) { buildGridValues(maxMonthTotal) }
+
+    // Tooltip state — local rememberSaveable; NOT in ViewModel
+    var tooltipBarIndex by rememberSaveable { mutableStateOf<Int?>(null) }
+
+    // Scroll state — pre-scroll to rightmost bar on first composition
+    val scrollState = rememberScrollState()
+    LaunchedEffect(orderedHistory.size) {
+        if (orderedHistory.isNotEmpty()) {
+            scrollState.scrollTo(scrollState.maxValue)
+        }
+    }
+
+    // Resolve text colors in composable scope for use inside Canvas
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val gridlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val surfaceContainerHighest = MaterialTheme.colorScheme.surfaceContainerHighest
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // Fixed Y-axis labels drawn in a separate Box so they stay visible during scroll
+        Box(
+            modifier = Modifier
+                .width(yAxisWidthDp)
+                .height(chartHeightDp + 20.dp) // +20dp for month labels area
+                .align(Alignment.TopStart),
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val chartH = chartHeightPx
+                gridValues.forEach { value ->
+                    val y = chartH - (value / maxMonthTotal * chartH).toFloat()
+                    // Gridline stub on Y-axis side
+                    drawLine(
+                        color = gridlineColor,
+                        start = Offset(size.width - 4.dp.toPx(), y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                    // Y-label text using nativeCanvas for precise positioning
+                    val label = formatYLabel(value)
+                    val paint = android.graphics.Paint().apply {
+                        color = labelColor.toArgb()
+                        textSize = 9.dp.toPx()
+                        textAlign = android.graphics.Paint.Align.RIGHT
+                        isAntiAlias = true
+                    }
+                    drawContext.canvas.nativeCanvas.drawText(
+                        label,
+                        size.width - 6.dp.toPx(),
+                        y + 4.dp.toPx(),
+                        paint,
+                    )
+                }
+            }
+        }
+
+        // Scrollable chart area — starts to the right of the Y-axis
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = yAxisWidthDp)
+                .horizontalScroll(scrollState),
+        ) {
+            Box(modifier = Modifier.width(totalCanvasWidthDp - yAxisWidthDp)) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(chartHeightDp + 20.dp) // extra for month labels
+                        .pointerInput(orderedHistory, historySelectedCategories, historySelectedMerchants) {
+                            detectTapGestures { offset ->
+                                val xStart = gapPx
+                                val tappedIndex = ((offset.x - xStart) / (barWidthPx + gapPx))
+                                    .toInt()
+                                    .coerceIn(0, orderedHistory.size - 1)
+                                // Only register tap if within a bar, not the gap
+                                val barLeft = xStart + tappedIndex * (barWidthPx + gapPx)
+                                if (offset.x >= barLeft && offset.x <= barLeft + barWidthPx) {
+                                    tooltipBarIndex = if (tooltipBarIndex == tappedIndex) null else tappedIndex
+                                }
+                            }
+                        },
+                ) {
+                    val chartH = chartHeightPx
+
+                    // Draw horizontal gridlines across the full canvas width
+                    gridValues.forEach { value ->
+                        val y = chartH - (value / maxMonthTotal * chartH).toFloat()
+                        drawLine(
+                            color = gridlineColor,
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    }
+
+                    // Draw bars
+                    orderedHistory.forEachIndexed { index, monthHistory ->
+                        val merchantHistory = merchantHistoryByMonth[monthHistory.month]
+                        val segments = buildBarSegments(
+                            monthHistory, merchantHistory,
+                            historySelectedCategories, historySelectedMerchants,
+                            colorMap, miscColor, allHistoryCategories, palette,
+                        )
+                        val totalHeight = segments.sumOf { it.amount }
+                        val barLeft = gapPx + index * (barWidthPx + gapPx)
+                        var currentY = chartH
+
+                        segments.forEach { seg ->
+                            val segH = if (totalHeight > 0)
+                                (seg.amount / maxMonthTotal * chartH).toFloat()
+                            else 0f
+                            val segTop = currentY - segH
+                            drawRoundRect(
+                                color = seg.color,
+                                topLeft = Offset(barLeft, segTop),
+                                size = Size(barWidthPx, segH),
+                                cornerRadius = CornerRadius(3.dp.toPx()),
+                            )
+                            currentY = segTop
+                        }
+
+                        // Month label below the bar
+                        val label = monthHistory.month.format(barMonthFmt)
+                        val labelPaint = android.graphics.Paint().apply {
+                            color = onSurfaceColor.toArgb()
+                            textSize = 9.dp.toPx()
+                            textAlign = android.graphics.Paint.Align.CENTER
+                            isAntiAlias = true
+                        }
+                        drawContext.canvas.nativeCanvas.drawText(
+                            label,
+                            barLeft + barWidthPx / 2f,
+                            chartH + 14.dp.toPx(),
+                            labelPaint,
+                        )
+                    }
+                }
+
+                // Tooltip overlay — rendered as a Compose Surface above the canvas
+                tooltipBarIndex?.let { idx ->
+                    if (idx in orderedHistory.indices) {
+                        val monthHistory = orderedHistory[idx]
+                        val merchantHistory = merchantHistoryByMonth[monthHistory.month]
+                        val segments = buildBarSegments(
+                            monthHistory, merchantHistory,
+                            historySelectedCategories, historySelectedMerchants,
+                            colorMap, miscColor, allHistoryCategories, palette,
+                        )
+                        // Position tooltip above the tapped bar
+                        val barLeftDp = gapDp + (barWidthDp + gapDp) * idx
+                        val tooltipTotal = segments.sumOf { it.amount }
+
+                        AnimatedVisibility(
+                            visible = true,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                            modifier = Modifier
+                                .offset(x = barLeftDp)
+                                .wrapContentWidth(unbounded = true),
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                tonalElevation = 2.dp,
+                                modifier = Modifier
+                                    .requiredWidthIn(min = 140.dp, max = 200.dp)
+                                    .padding(bottom = chartHeightDp - (tooltipTotal / maxMonthTotal * chartHeightDp.value).dp + 8.dp),
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text(
+                                        text = monthHistory.month.format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    segments.forEach { seg ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 1.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                                    .background(seg.color),
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = seg.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 1,
+                                            )
+                                            Text(
+                                                text = currencyFmt.format(seg.amount),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        }
+                                    }
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                    )
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        Text(
+                                            text = "Total",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Text(
+                                            text = currencyFmt.format(tooltipTotal),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Builds 3–4 round gridline values scaled to the max month total. */
+private fun buildGridValues(maxTotal: Double): List<Double> {
+    if (maxTotal <= 0.0) return listOf(0.0)
+    val magnitude = Math.pow(10.0, Math.floor(Math.log10(maxTotal)))
+    val step = when {
+        maxTotal / magnitude <= 2 -> magnitude / 4
+        maxTotal / magnitude <= 5 -> magnitude / 2
+        else -> magnitude
+    }
+    val values = mutableListOf<Double>()
+    var v = step
+    while (v <= maxTotal && values.size < 4) {
+        values.add(v)
+        v += step
+    }
+    return values.ifEmpty { listOf(maxTotal) }
+}
+
+/** Formats a Y-axis dollar value as "$1k", "$2.5k", "$10k", etc. */
+private fun formatYLabel(value: Double): String {
+    return when {
+        value >= 1000 -> {
+            val k = value / 1000
+            if (k == k.toLong().toDouble()) "$${k.toLong()}k" else "$${"%.1f".format(k)}k"
+        }
+        else -> "$${"%.0f".format(value)}"
+    }
+}
+
+/** Builds the compact filter summary string shown below the chart. */
+private fun buildFilterSummaryText(
+    selectedCategories: Set<String>?,
+    selectedMerchants: Set<String>?,
+    allCategories: List<CategoryAmount>,
+    allMerchants: List<MerchantSpendSummary>,
+): String {
+    val parts = mutableListOf<String>()
+
+    if (selectedCategories != null) {
+        val sorted = allCategories
+            .filter { it.effectiveCategory in selectedCategories }
+            .map { CategoryMeta.get(it.effectiveCategory).displayName }
+        when {
+            sorted.isEmpty() -> parts.add("No categories")
+            sorted.size <= 2 -> parts.add(sorted.joinToString(", "))
+            else -> parts.add("${sorted.take(2).joinToString(", ")} +${sorted.size - 2}")
+        }
+    }
+
+    if (selectedMerchants != null) {
+        val sorted = allMerchants
+            .filter { it.merchantName in selectedMerchants }
+            .map { it.merchantName }
+        when {
+            sorted.isEmpty() -> parts.add("No merchants")
+            sorted.size <= 2 -> parts.add(sorted.joinToString(", "))
+            else -> parts.add("${sorted.take(2).joinToString(", ")} +${sorted.size - 2}")
+        }
+    }
+
+    return parts.joinToString(" · ").ifEmpty { "" }
+}
+
+// ── History Category Filter Dialog ────────────────────────────────────────────
+
+@Composable
+private fun HistoryCategoryFilterDialog(
+    allCategories: List<CategoryAmount>,
+    selectedCategories: Set<String>?,
+    onConfirm: (Set<String>?) -> Unit,
+    onDismiss: () -> Unit,
+    onNavigateToMerchants: () -> Unit,
+) {
+    // Dialog-local checked state: initialize from external state.
+    // null selectedCategories (all) → all boxes checked
+    val allKeys = remember(allCategories) { allCategories.map { it.effectiveCategory }.toSet() }
+    var checkedKeys by remember(selectedCategories, allKeys) {
+        mutableStateOf(selectedCategories ?: allKeys)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Categories",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { checkedKeys = allKeys },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("Select All", style = MaterialTheme.typography.labelMedium) }
+                TextButton(
+                    onClick = { checkedKeys = emptySet() },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("Clear All", style = MaterialTheme.typography.labelMedium) }
+            }
+        },
+        text = {
+            Column {
+                LazyColumn(
+                    modifier = Modifier.requiredWidthIn(min = 280.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(allCategories, key = { it.effectiveCategory }) { cat ->
+                        val meta = CategoryMeta.get(cat.effectiveCategory)
+                        val checked = cat.effectiveCategory in checkedKeys
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    checkedKeys = if (checked)
+                                        checkedKeys - cat.effectiveCategory
+                                    else
+                                        checkedKeys + cat.effectiveCategory
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = {
+                                    checkedKeys = if (it)
+                                        checkedKeys + cat.effectiveCategory
+                                    else
+                                        checkedKeys - cat.effectiveCategory
+                                },
+                                modifier = Modifier.size(40.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = meta.emoji,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.width(24.dp),
+                            )
+                            Text(
+                                text = meta.displayName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    // Merchants navigation button at bottom of list
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = {
+                                // Apply current category selection first, then navigate
+                                val result = if (checkedKeys == allKeys) null
+                                    else if (checkedKeys.isEmpty()) emptySet()
+                                    else checkedKeys
+                                onConfirm(result)
+                                onNavigateToMerchants()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = "Merchants →",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                // null = all selected (boxes match the full set); emptySet = explicit clear
+                val result = when {
+                    checkedKeys == allKeys -> null
+                    checkedKeys.isEmpty() -> emptySet()
+                    else -> checkedKeys
+                }
+                onConfirm(result)
+            }) { Text("Apply") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+// ── History Merchant Filter Dialog ────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HistoryMerchantFilterDialog(
+    allMerchants: List<MerchantSpendSummary>,
+    selectedMerchants: Set<String>?,
+    historySelectedCategories: Set<String>?,
+    onConfirm: (Set<String>?) -> Unit,
+    onDismiss: () -> Unit,
+    onNavigateToCategories: () -> Unit,
+) {
+    // Smart filtering: if category filter is active, only show merchants in those categories
+    val visibleMerchants = remember(allMerchants, historySelectedCategories) {
+        if (historySelectedCategories == null) allMerchants
+        else allMerchants.filter { it.primaryCategory in historySelectedCategories }
+    }
+    val allKeys = remember(visibleMerchants) { visibleMerchants.map { it.merchantName }.toSet() }
+    var checkedKeys by remember(selectedMerchants, allKeys) {
+        mutableStateOf(selectedMerchants ?: allKeys)
+    }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    val filteredMerchants = remember(visibleMerchants, searchQuery) {
+        if (searchQuery.isBlank()) visibleMerchants
+        else visibleMerchants.filter { it.merchantName.contains(searchQuery, ignoreCase = true) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = onNavigateToCategories,
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) { Text("← Categories", style = MaterialTheme.typography.labelMedium) }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { checkedKeys = allKeys },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text("Select All", style = MaterialTheme.typography.labelMedium) }
+                    TextButton(
+                        onClick = { checkedKeys = emptySet() },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text("Clear All", style = MaterialTheme.typography.labelMedium) }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search merchants") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Search,
+                            contentDescription = "Search",
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    trailingIcon = if (searchQuery.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Clear search",
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    } else null,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier.requiredWidthIn(min = 280.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(filteredMerchants, key = { it.merchantName }) { merchant ->
+                    val checked = merchant.merchantName in checkedKeys
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                checkedKeys = if (checked)
+                                    checkedKeys - merchant.merchantName
+                                else
+                                    checkedKeys + merchant.merchantName
+                            }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = {
+                                checkedKeys = if (it)
+                                    checkedKeys + merchant.merchantName
+                                else
+                                    checkedKeys - merchant.merchantName
+                            },
+                            modifier = Modifier.size(40.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = merchant.merchantName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val result = when {
+                    checkedKeys == allKeys -> null
+                    checkedKeys.isEmpty() -> emptySet()
+                    else -> checkedKeys
+                }
+                onConfirm(result)
+            }) { Text("Apply") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 // ── Shared labeled amount ─────────────────────────────────────────────────────

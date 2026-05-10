@@ -44,6 +44,14 @@ data class AccountEntity(
     val lastStatementDate: String? = null,
 )
 
+/**
+ * True when Plaid does not supply statement cycle dates for this card (typical for
+ * business credit cards). The spending window heuristic falls back to the last 30 days
+ * rather than anchoring to a statement close date.
+ */
+val AccountEntity.usesWindowHeuristic: Boolean
+    get() = lastStatementDate == null && nextDueDate == null
+
 data class InstitutionWithAccounts(
     @Embedded val institution: InstitutionEntity,
     @Relation(parentColumn = "institutionId", entityColumn = "institutionId")

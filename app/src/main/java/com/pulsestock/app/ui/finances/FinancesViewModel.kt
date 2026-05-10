@@ -5,10 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pulsestock.app.data.poarvault.AccountDateRange
 import com.pulsestock.app.data.poarvault.AccountEntity
+import com.pulsestock.app.data.poarvault.BalanceSnapshot
 import com.pulsestock.app.data.poarvault.MerchantRuleProposal
 import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.ui.finances.CategoryMeta
 import com.pulsestock.app.data.poarvault.ExpenseWithLinks
+import com.pulsestock.app.data.poarvault.MonthlySpendRow
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.PoarVaultApi
 import com.pulsestock.app.data.poarvault.PoarVaultDatabase
@@ -17,6 +19,8 @@ import com.pulsestock.app.data.poarvault.SplitwiseApi
 import com.pulsestock.app.data.poarvault.SplitwiseExpense
 import com.pulsestock.app.data.poarvault.SplitwiseRepository
 import com.pulsestock.app.data.poarvault.TokenStore
+import com.pulsestock.app.data.poarvault.effectiveCategory
+import com.pulsestock.app.data.poarvault.usesWindowHeuristic
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +48,59 @@ data class LinkSheetState(
     val expense: SplitwiseExpense,
     val suggested: List<PlaidTransaction>,
     val all: List<PlaidTransaction>,
+)
+
+/** One category bucket within a monthly spending history entry. */
+data class CategoryAmount(
+    val effectiveCategory: String,
+    val totalAmount: Double,
+)
+
+/**
+ * Aggregated merchant for the history filter.
+ * [primaryCategory] = the effectiveCategory that appears most often across all 12 months
+ * for this merchant — used for smart filtering when a category filter is active.
+ */
+data class MerchantSpendSummary(
+    val merchantName: String,
+    val totalAmount: Double,
+    val primaryCategory: String,
+)
+
+/**
+ * Per-merchant, per-month spending total. Mirrors [MonthlySpendingHistory] but keyed by
+ * merchantName. Used when [FinancesUiState.historySelectedMerchants] is non-null so the
+ * chart can render merchant-segmented bars instead of category-segmented bars.
+ */
+data class MonthlyMerchantAmount(
+    val merchantName: String,
+    val totalAmount: Double,
+)
+
+data class MonthlyMerchantHistory(
+    val month: YearMonth,
+    val merchants: List<MonthlyMerchantAmount>,
+)
+
+/** Monthly spending total + per-category breakdown for the history sheet. */
+data class MonthlySpendingHistory(
+    val month: YearMonth,
+    val totalAmount: Double,
+    val categories: List<CategoryAmount>,
+)
+
+/** One account's balance data point within a monthly balance snapshot entry. */
+data class AccountBalancePoint(
+    val accountId: String,
+    val accountName: String,
+    val statementBalance: Double?,
+    val currentBalance: Double?,
+)
+
+/** Latest-per-account balance snapshot for a given calendar month, for the history sheet. */
+data class MonthlyBalanceSnapshot(
+    val month: YearMonth,
+    val snapshots: List<AccountBalancePoint>,
 )
 
 data class FinancesUiState(
@@ -87,6 +144,22 @@ data class FinancesUiState(
     val allTransactionsMode: Boolean = false,
     // Transaction IDs recategorized in the current Manage session (reset when sheet closes)
     val sessionCategorizedIds: Set<String> = emptySet(),
+    // One-shot flag: true when the ViewModel just auto-excluded business CCs due to a
+    // STATEMENT/THIS_CYCLE window selection. The screen consumes this to show a Snackbar
+    // and immediately clears it so the snackbar only fires once per transition.
+    val pendingBusinessCardSnackbar: Boolean = false,
+    // History sheet data — pre-computed in the ViewModel, ordered most-recent first
+    val spendingHistoryByMonth: List<MonthlySpendingHistory> = emptyList(),
+    val balanceSnapshotsByMonth: List<MonthlyBalanceSnapshot> = emptyList(),
+    // Merchant-keyed parallel to spendingHistoryByMonth — used when merchant filter is active
+    val spendingHistoryByMonthAndMerchant: List<MonthlyMerchantHistory> = emptyList(),
+    // All categories present in 12-month data, sorted by total spend desc
+    val allHistoryCategories: List<CategoryAmount> = emptyList(),
+    // All merchants present in 12-month data, sorted by total spend desc
+    val topMerchantsForHistory: List<MerchantSpendSummary> = emptyList(),
+    // null = all selected (default); emptySet() = user explicitly cleared everything
+    val historySelectedCategories: Set<String>? = null,
+    val historySelectedMerchants: Set<String>? = null,
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -225,6 +298,45 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 _uiState.value = _uiState.value.copy(customCategories = categories)
             }
         }
+        // Balance snapshot history — re-queries whenever credit accounts list changes
+        viewModelScope.launch {
+            _uiState
+                .map { it.creditAccounts.map { a -> a.accountId } }
+                .distinctUntilChanged()
+                .flatMapLatest { accountIds ->
+                    if (accountIds.isEmpty()) flowOf(emptyList())
+                    else repo.watchSnapshotsForAccounts(accountIds)
+                }
+                .collect { snapshots ->
+                    val accounts = _uiState.value.creditAccounts
+                    val byMonth = aggregateBalanceSnapshots(snapshots, accounts)
+                    _uiState.value = _uiState.value.copy(balanceSnapshotsByMonth = byMonth)
+                }
+        }
+        // Spending history — re-queries whenever selected accounts change.
+        // A single fetch populates category history, merchant history, and the filter lists.
+        viewModelScope.launch {
+            _uiState
+                .map { it.effectiveSpendingAccounts.map { a -> a.accountId } }
+                .distinctUntilChanged()
+                .collect { accountIds ->
+                    val (categoryRows, rawTxns) = try {
+                        repo.getMonthlySpendingHistoryWithRaw(accountIds)
+                    } catch (e: Exception) {
+                        PulseLog.w("FinancesVM", "getMonthlySpendingHistory failed: ${e.message}")
+                        Pair(emptyList(), emptyList())
+                    }
+                    val history = aggregateSpendingHistory(categoryRows)
+                    val (merchantHistory, merchantSummaries) = aggregateMerchantHistory(rawTxns)
+                    val allCategories = aggregateAllHistoryCategories(categoryRows)
+                    _uiState.value = _uiState.value.copy(
+                        spendingHistoryByMonth = history,
+                        spendingHistoryByMonthAndMerchant = merchantHistory,
+                        topMerchantsForHistory = merchantSummaries,
+                        allHistoryCategories = allCategories,
+                    )
+                }
+        }
     }
 
     fun sync() {
@@ -341,7 +453,11 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     // ── Spending window & account selection ───────────────────────────────────
 
     fun setSpendingWindow(window: SpendingWindow) {
-        _uiState.value = _uiState.value.copy(spendingWindow = window)
+        _uiState.value = computeWindowChange(_uiState.value, window)
+    }
+
+    fun clearBusinessCardSnackbar() {
+        _uiState.value = _uiState.value.copy(pendingBusinessCardSnackbar = false)
     }
 
     fun toggleSpendingAccount(accountId: String) {
@@ -523,6 +639,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = _uiState.value.copy(error = null)
     }
 
+    // ── History filter functions ───────────────────────────────────────────────
+
+    /** null = all selected; emptySet() = user explicitly cleared everything */
+    fun setHistoryCategoryFilter(selected: Set<String>?) {
+        _uiState.value = _uiState.value.copy(historySelectedCategories = selected)
+    }
+
+    /** null = all selected; emptySet() = user explicitly cleared everything */
+    fun setHistoryMerchantFilter(selected: Set<String>?) {
+        _uiState.value = _uiState.value.copy(historySelectedMerchants = selected)
+    }
+
+    fun clearHistoryFilters() {
+        _uiState.value = _uiState.value.copy(
+            historySelectedCategories = null,
+            historySelectedMerchants = null,
+        )
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun currentSpendingRanges(): List<AccountDateRange> {
@@ -579,6 +714,147 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // ── History aggregation ───────────────────────────────────────────────────
+
+    /**
+     * Groups raw [MonthlySpendRow] items (one per category per month) into
+     * [MonthlySpendingHistory] objects ordered most-recent first.
+     * Applies the same display-name merging as the main breakdown (e.g. two Gym codes → one row).
+     */
+    private fun aggregateSpendingHistory(rows: List<MonthlySpendRow>): List<MonthlySpendingHistory> {
+        return rows
+            .groupBy { it.month } // "yyyy-MM"
+            .entries
+            .sortedByDescending { it.key }
+            .map { (monthStr, monthRows) ->
+                // Merge sibling categories by display name — same logic as the main breakdown.
+                val byDisplayName = monthRows.groupBy { CategoryMeta.get(it.effectiveCategory).displayName }
+                val mergedCategories = byDisplayName.values.map { group ->
+                    CategoryAmount(
+                        effectiveCategory = group.first().effectiveCategory,
+                        totalAmount = group.sumOf { it.totalAmount },
+                    )
+                }.sortedByDescending { it.totalAmount }
+
+                val yearMonth = runCatching { YearMonth.parse(monthStr) }.getOrNull()
+                    ?: return@map null
+                MonthlySpendingHistory(
+                    month = yearMonth,
+                    totalAmount = mergedCategories.sumOf { it.totalAmount },
+                    categories = mergedCategories,
+                )
+            }
+            .filterNotNull()
+    }
+
+    /**
+     * Aggregates all categories present across 12 months of history, sorted by total spend desc.
+     * Used to populate the category filter dialog in the history sheet.
+     */
+    private fun aggregateAllHistoryCategories(rows: List<MonthlySpendRow>): List<CategoryAmount> {
+        val byDisplayName = rows.groupBy { CategoryMeta.get(it.effectiveCategory).displayName }
+        return byDisplayName.values.map { group ->
+            CategoryAmount(
+                effectiveCategory = group.first().effectiveCategory,
+                totalAmount = group.sumOf { it.totalAmount },
+            )
+        }.sortedByDescending { it.totalAmount }
+    }
+
+    /**
+     * Groups raw [PlaidTransaction]s into monthly merchant history and a merchant summary list.
+     * Merchants with null [PlaidTransaction.merchantName] use [PlaidTransaction.name] as the key
+     * (Plaid doesn't always resolve a canonical merchant name).
+     *
+     * Returns (monthlyMerchantHistory sorted most-recent first, merchantSummaries sorted by total desc).
+     */
+    private fun aggregateMerchantHistory(
+        rawTxns: List<PlaidTransaction>,
+    ): Pair<List<MonthlyMerchantHistory>, List<MerchantSpendSummary>> {
+        // Monthly merchant history
+        val monthlyHistory = rawTxns
+            .groupBy { it.date.take(7) } // "yyyy-MM"
+            .entries
+            .sortedByDescending { it.key }
+            .mapNotNull { (monthStr, txns) ->
+                val yearMonth = runCatching { YearMonth.parse(monthStr) }.getOrNull()
+                    ?: return@mapNotNull null
+                val merchants = txns
+                    .groupBy { it.merchantName ?: it.name }
+                    .map { (merchant, mTxns) ->
+                        MonthlyMerchantAmount(
+                            merchantName = merchant,
+                            totalAmount = mTxns.sumOf { it.amount },
+                        )
+                    }
+                    .sortedByDescending { it.totalAmount }
+                MonthlyMerchantHistory(month = yearMonth, merchants = merchants)
+            }
+
+        // Merchant summaries: total 12-month spend + primary category (mode)
+        val summaries = rawTxns
+            .groupBy { it.merchantName ?: it.name }
+            .map { (merchant, txns) ->
+                // Primary category = most common effectiveCategory for this merchant
+                val primaryCategory = txns
+                    .groupBy { it.effectiveCategory }
+                    .maxBy { (_, v) -> v.size }
+                    .key
+                MerchantSpendSummary(
+                    merchantName = merchant,
+                    totalAmount = txns.sumOf { it.amount },
+                    primaryCategory = primaryCategory,
+                )
+            }
+            .sortedByDescending { it.totalAmount }
+
+        return Pair(monthlyHistory, summaries)
+    }
+
+    /**
+     * Groups raw [BalanceSnapshot]s into [MonthlyBalanceSnapshot] objects ordered most-recent
+     * first. Takes the latest snapshot per account per calendar month.
+     */
+    private fun aggregateBalanceSnapshots(
+        snapshots: List<BalanceSnapshot>,
+        accounts: List<AccountEntity>,
+    ): List<MonthlyBalanceSnapshot> {
+        val accountMap = accounts.associateBy { it.accountId }
+        // Group by (month, accountId), take the latest snapshot per group.
+        val latestPerAccountPerMonth = snapshots
+            .groupBy { snapshot ->
+                // Convert epoch millis to "yyyy-MM" using Calendar to avoid java.time
+                // timezone nuances on older devices — we only need the month bucket.
+                val cal = java.util.Calendar.getInstance()
+                cal.timeInMillis = snapshot.capturedAt
+                val y = cal.get(java.util.Calendar.YEAR)
+                val m = cal.get(java.util.Calendar.MONTH) + 1
+                "${y}-${m.toString().padStart(2, '0')}" to snapshot.accountId
+            }
+            .mapValues { (_, group) -> group.maxBy { it.capturedAt } }
+
+        // Re-group by month, then build AccountBalancePoint per account.
+        return latestPerAccountPerMonth.entries
+            .groupBy { (key, _) -> key.first } // group by "yyyy-MM"
+            .entries
+            .sortedByDescending { it.key }
+            .mapNotNull { (monthStr, entries) ->
+                val yearMonth = runCatching { YearMonth.parse(monthStr) }.getOrNull() ?: return@mapNotNull null
+                val points = entries
+                    .map { (_, snapshot) ->
+                        val account = accountMap[snapshot.accountId]
+                        AccountBalancePoint(
+                            accountId = snapshot.accountId,
+                            accountName = account?.name ?: snapshot.accountId,
+                            statementBalance = snapshot.statementBalance,
+                            currentBalance = snapshot.currentBalance,
+                        )
+                    }
+                    .sortedBy { it.accountName }
+                MonthlyBalanceSnapshot(month = yearMonth, snapshots = points)
+            }
+    }
+
     private fun buildDateRangeLabel(
         window: SpendingWindow,
         ranges: List<AccountDateRange>,
@@ -631,4 +907,55 @@ internal fun computeSpendingAccountToggle(
     val currentSet = current ?: allAccountIds.toSet()
     val updated = if (accountId in currentSet) currentSet - accountId else currentSet + accountId
     return if (updated.isEmpty()) null else updated
+}
+
+/**
+ * Pure function extracted for unit testability.
+ * Returns a new [FinancesUiState] reflecting [window] selection with:
+ * - STATEMENT: business CCs (those where [usesWindowHeuristic] is true) excluded from
+ *   the selection; [pendingBusinessCardSnackbar] set when any were actually removed.
+ * - Any other window: business CCs restored into the selection; snackbar cleared.
+ *
+ * "null" selection means all accounts selected. The function only produces null when
+ * the resulting set equals the full account list (normalizing explicit-all back to null).
+ */
+internal fun computeWindowChange(state: FinancesUiState, window: SpendingWindow): FinancesUiState {
+    val businessCardIds = state.creditAccounts
+        .filter { it.usesWindowHeuristic }
+        .map { it.accountId }
+        .toSet()
+
+    val usesStatementAnchor = window == SpendingWindow.STATEMENT
+
+    val newSelectedIds: Set<String>?
+    val showSnackbar: Boolean
+
+    if (usesStatementAnchor && businessCardIds.isNotEmpty()) {
+        // Expand null (= all) to an explicit set before removing business CCs, so the
+        // removal is precise and user's personal-card chip state is preserved.
+        val currentEffective = state.selectedSpendingAccountIds
+            ?: state.creditAccounts.map { it.accountId }.toSet()
+        val excluded = currentEffective - businessCardIds
+        // If every selected account was a business CC, the result is empty — treat as
+        // "no personal cards exist" and use null so the card shows an empty-state message
+        // rather than silently hiding all data.
+        newSelectedIds = if (excluded.isEmpty()) null else excluded
+        showSnackbar = currentEffective.intersect(businessCardIds).isNotEmpty()
+    } else {
+        // Non-statement window: restore business CCs into the selection. Expand the
+        // current set (or use all) and add back every business CC that was absent.
+        val currentEffective = state.selectedSpendingAccountIds
+            ?: state.creditAccounts.map { it.accountId }.toSet()
+        val restored = currentEffective + businessCardIds
+        // If restored equals the full account list, normalize back to null (= all).
+        val allIds = state.creditAccounts.map { it.accountId }.toSet()
+        newSelectedIds = if (restored == allIds) null else restored
+        showSnackbar = false
+    }
+
+    return state.copy(
+        spendingWindow = window,
+        selectedSpendingAccountIds = newSelectedIds,
+        pendingBusinessCardSnackbar = showSnackbar,
+    )
 }

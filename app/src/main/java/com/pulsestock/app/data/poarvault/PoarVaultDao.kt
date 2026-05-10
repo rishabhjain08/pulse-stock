@@ -108,6 +108,22 @@ interface PoarVaultDao {
     @Query("UPDATE plaid_transactions SET categoryOverride = NULL WHERE categoryOverride = :category")
     suspend fun clearOverrideByCategory(category: String)
 
+    // ── Balance snapshots ─────────────────────────────────────────────────────
+
+    @Insert
+    suspend fun insertBalanceSnapshot(snapshot: BalanceSnapshot)
+
+    /**
+     * Returns all snapshots for the given accounts captured at or after [since] (epoch millis).
+     * The history sheet groups these by calendar month and takes the latest per account per month.
+     */
+    @Query("""
+        SELECT * FROM balance_snapshots
+        WHERE accountId IN (:accountIds) AND capturedAt >= :since
+        ORDER BY capturedAt DESC
+    """)
+    fun getSnapshotsForAccounts(accountIds: List<String>, since: Long): Flow<List<BalanceSnapshot>>
+
     // ── Category rules ────────────────────────────────────────────────────────
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

@@ -85,6 +85,23 @@ data class CustomCategory(
     @PrimaryKey val name: String,
 )
 
+/**
+ * Point-in-time balance snapshot written on every sync.
+ * Multiple snapshots per account per day are fine — the history sheet groups by
+ * strftime('%Y-%m', ...) and takes the latest per account per month.
+ */
+@Entity(
+    tableName = "balance_snapshots",
+    indices = [androidx.room.Index("accountId")],
+)
+data class BalanceSnapshot(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val accountId: String,
+    val capturedAt: Long,           // epoch millis — System.currentTimeMillis() at sync time
+    val statementBalance: Double?,  // null for business CCs or if liabilities not loaded yet
+    val currentBalance: Double?,    // from /balances
+)
+
 // Effective category priority: categoryOverride > pfcDetailed > pfcPrimary > category
 val PlaidTransaction.effectiveCategory: String
     get() = categoryOverride ?: pfcDetailed ?: pfcPrimary ?: category ?: "OTHER"
