@@ -80,6 +80,11 @@ data class CategoryRule(
     val category: String,
 )
 
+@Entity(tableName = "custom_categories")
+data class CustomCategory(
+    @PrimaryKey val name: String,
+)
+
 // Effective category priority: categoryOverride > pfcDetailed > pfcPrimary > category
 val PlaidTransaction.effectiveCategory: String
     get() = categoryOverride ?: pfcDetailed ?: pfcPrimary ?: category ?: "OTHER"

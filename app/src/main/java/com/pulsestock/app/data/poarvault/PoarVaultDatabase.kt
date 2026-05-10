@@ -17,8 +17,9 @@ import net.sqlcipher.database.SupportFactory
         SplitwiseExpense::class,
         SplitwisePlaidLink::class,
         CategoryRule::class,
+        CustomCategory::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class PoarVaultDatabase : RoomDatabase() {
@@ -100,6 +101,17 @@ abstract class PoarVaultDatabase : RoomDatabase() {
             }
         }
 
+        // v7→v8: add custom_categories table for user-created category names
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS custom_categories (
+                        name TEXT NOT NULL PRIMARY KEY
+                    )
+                """.trimIndent())
+            }
+        }
+
         @VisibleForTesting
         fun getInMemory(context: Context): PoarVaultDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, PoarVaultDatabase::class.java)
@@ -115,7 +127,7 @@ abstract class PoarVaultDatabase : RoomDatabase() {
                         "poarvault.db",
                     )
                     .openHelperFactory(SupportFactory(passphrase))
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .build()
                     .also { INSTANCE = it }
             }

@@ -151,6 +151,7 @@ fun FinancesScreen(
                 customCategories = state.customCategories,
                 onPick = { category -> vm.applyOverride(overridingTx.transactionId, category) },
                 onClear = { vm.applyOverride(overridingTx.transactionId, null) },
+                onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDismiss = vm::cancelOverride,
             )
         }
@@ -1015,6 +1016,7 @@ private fun CategoryPickerSheet(
     customCategories: List<String>,
     onPick: (String) -> Unit,
     onClear: () -> Unit,
+    onSaveCustomCategory: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
@@ -1065,7 +1067,7 @@ private fun CategoryPickerSheet(
                     emoji = meta.emoji,
                     label = meta.displayName,
                     selected = selectedOverride == cat,
-                    onPick = { onPick(cat) },
+                    onPick = { if (selectedOverride == cat) onClear() else onPick(cat) },
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -1088,7 +1090,7 @@ private fun CategoryPickerSheet(
                 emoji = meta.emoji,
                 label = meta.displayName,
                 selected = selectedOverride == code,
-                onPick = { onPick(code) },
+                onPick = { if (selectedOverride == code) onClear() else onPick(code) },
             )
         }
 
@@ -1111,27 +1113,15 @@ private fun CategoryPickerSheet(
             )
             TextButton(
                 onClick = {
-                    if (customInput.isNotBlank()) onPick(customInput.trim())
+                    val name = customInput.trim()
+                    if (name.isNotBlank()) {
+                        onSaveCustomCategory(name)
+                        customInput = ""
+                    }
                 },
                 enabled = customInput.isNotBlank(),
             ) {
-                Text("Set")
-            }
-        }
-
-        // Remove override option
-        if (transaction?.categoryOverride != null) {
-            TextButton(
-                onClick = onClear,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-            ) {
-                Text(
-                    "Remove override (reset to automatic)",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                Text("Add")
             }
         }
     }

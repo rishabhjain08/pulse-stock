@@ -149,6 +149,10 @@ class PoarVaultRepository(
 
     fun watchCustomCategories(): Flow<List<String>> = db.dao().watchCustomCategories()
 
+    suspend fun saveCustomCategory(name: String) {
+        db.dao().upsertCustomCategory(CustomCategory(name))
+    }
+
     // ── Transactions ──────────────────────────────────────────────────────────
 
     suspend fun refreshTransactions(institutionId: String) {

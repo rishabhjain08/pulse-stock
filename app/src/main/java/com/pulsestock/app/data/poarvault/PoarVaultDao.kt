@@ -86,8 +86,18 @@ interface PoarVaultDao {
     @Query("SELECT transactionId, categoryOverride FROM plaid_transactions WHERE transactionId IN (:ids)")
     suspend fun getOverridesForIds(ids: List<String>): List<TransactionOverride>
 
-    @Query("SELECT DISTINCT categoryOverride FROM plaid_transactions WHERE categoryOverride IS NOT NULL ORDER BY categoryOverride ASC")
+    // Union of explicitly saved custom names + any override values on transactions,
+    // so names persist even after being replaced on the transaction that introduced them.
+    @Query("""
+        SELECT name FROM custom_categories
+        UNION
+        SELECT DISTINCT categoryOverride AS name FROM plaid_transactions WHERE categoryOverride IS NOT NULL
+        ORDER BY name ASC
+    """)
     fun watchCustomCategories(): Flow<List<String>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun upsertCustomCategory(category: CustomCategory)
 
     // ── Category rules ────────────────────────────────────────────────────────
 

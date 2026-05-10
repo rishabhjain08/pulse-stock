@@ -367,6 +367,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun saveCustomCategory(name: String) {
+        viewModelScope.launch { repo.saveCustomCategory(name) }
+    }
+
     fun confirmMerchantRule() {
         val proposal = _uiState.value.pendingMerchantRule ?: return
         _uiState.value = _uiState.value.copy(pendingMerchantRule = null)
