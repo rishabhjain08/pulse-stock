@@ -779,6 +779,7 @@ private fun CategoryBreakdownCard(
                 onSetHistoryMerchantFilter = onSetHistoryMerchantFilter,
                 onClearHistoryFilters = onClearHistoryFilters,
                 selectedAccountNames = selectedAccountNames,
+                spendingWindow = spendingWindow,
                 currencyFmt = currencyFmt,
             )
         }
@@ -1780,6 +1781,7 @@ private fun SpendingHistorySheet(
     onSetHistoryMerchantFilter: (Set<String>?) -> Unit,
     onClearHistoryFilters: () -> Unit,
     selectedAccountNames: List<String>,
+    spendingWindow: SpendingWindow,
     currencyFmt: NumberFormat,
 ) {
     // Single filter dialog — open/closed state only
@@ -1841,13 +1843,14 @@ private fun SpendingHistorySheet(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                if (selectedAccountNames.isNotEmpty()) {
-                    Text(
-                        text = selectedAccountNames.joinToString(", ") { it.shortCardName() },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                val cardLabel = selectedAccountNames
+                    .joinToString(", ") { it.shortCardName() }
+                    .ifEmpty { "All cards" }
+                Text(
+                    text = "${spendingWindow.label} · $cardLabel · Last 12 months",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             // Fix 5 — filter icon + count badges compound element
             // Tapping the icon OR the badge row opens the unified filter dialog.
