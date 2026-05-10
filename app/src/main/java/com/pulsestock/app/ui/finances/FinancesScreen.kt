@@ -8,7 +8,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -156,7 +158,6 @@ fun FinancesScreen(
                 transaction = overridingTx,
                 customCategories = state.customCategories,
                 onPick = { category -> vm.applyOverride(overridingTx.transactionId, category) },
-                onClear = { vm.applyOverride(overridingTx.transactionId, null) },
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
@@ -1033,14 +1034,21 @@ private fun CategoryPickerSheet(
     transaction: PlaidTransaction?,
     customCategories: List<String>,
     onPick: (String) -> Unit,
-    onClear: () -> Unit,
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
     countTransactionsWithOverride: suspend (String) -> Int,
     onDismiss: () -> Unit,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
+    var showChangeHint by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Pair<String, Int>?>(null) }
+
+    if (showChangeHint) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(2500)
+            showChangeHint = false
+        }
+    }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -1122,7 +1130,7 @@ private fun CategoryPickerSheet(
                     emoji = meta.emoji,
                     label = meta.displayName,
                     selected = effectiveCat == cat,
-                    onPick = { if (effectiveCat == cat && hasOverride) onClear() else onPick(cat) },
+                    onPick = { if (effectiveCat == cat) showChangeHint = true else onPick(cat) },
                     onDelete = {
                         scope.launch {
                             val count = countTransactionsWithOverride(cat)
@@ -1163,7 +1171,7 @@ private fun CategoryPickerSheet(
                 emoji = orphanMeta.emoji,
                 label = orphanMeta.displayName,
                 selected = true,
-                onPick = { onClear() },
+                onPick = { showChangeHint = true },
             )
         }
         sortedQuickPicks.forEach { (code, meta) ->
@@ -1178,7 +1186,7 @@ private fun CategoryPickerSheet(
                 onPick = {
                     val isSameDisplay = CategoryMeta.get(effectiveCat).displayName == meta.displayName
                     if (effectiveCat == code || (isSameDisplay && !effectiveCatInQuickPicks)) {
-                        onClear()
+                        showChangeHint = true
                     } else onPick(code)
                 },
             )
@@ -1217,6 +1225,27 @@ private fun CategoryPickerSheet(
             }
         }
 
+        AnimatedVisibility(
+            visible = showChangeHint,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.inverseSurface,
+                tonalElevation = 0.dp,
+            ) {
+                Text(
+                    text = "Tap a different category to change it",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        }
     }
 }
 
