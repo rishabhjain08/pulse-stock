@@ -99,6 +99,12 @@ interface PoarVaultDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsertCustomCategory(category: CustomCategory)
 
+    @Query("DELETE FROM custom_categories WHERE name = :name")
+    suspend fun deleteCustomCategory(name: String)
+
+    @Query("UPDATE plaid_transactions SET categoryOverride = NULL WHERE categoryOverride = :category")
+    suspend fun clearOverrideByCategory(category: String)
+
     // ── Category rules ────────────────────────────────────────────────────────
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

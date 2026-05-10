@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
@@ -48,6 +49,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,10 +69,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -152,6 +157,7 @@ fun FinancesScreen(
                 onPick = { category -> vm.applyOverride(overridingTx.transactionId, category) },
                 onClear = { vm.applyOverride(overridingTx.transactionId, null) },
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
+                onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 onDismiss = vm::cancelOverride,
             )
         }
@@ -160,12 +166,13 @@ fun FinancesScreen(
     // Merchant rule confirmation dialog
     val proposal = state.pendingMerchantRule
     if (proposal != null) {
+        val proposalMeta = CategoryMeta.get(proposal.category)
         AlertDialog(
             onDismissRequest = vm::dismissMerchantRule,
             title = { Text("Apply to all ${proposal.merchantName}?") },
             text = {
                 Text(
-                    "Set '${proposal.category}' for ${proposal.otherCount} other " +
+                    "Set ${proposalMeta.emoji} ${proposalMeta.displayName} for ${proposal.otherCount} other " +
                     "${proposal.merchantName} transaction${if (proposal.otherCount == 1) "" else "s"} " +
                     "and remember this rule for future syncs."
                 )
@@ -642,6 +649,14 @@ private fun CategoryBreakdownCard(
                             selected = selected,
                             onClick = { onToggleAccount(account.accountId) },
                             label = { Text(account.name.shortCardName()) },
+                            leadingIcon = if (selected) {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                            } else null,
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
                         )
                     }
                 }
@@ -1017,18 +1032,31 @@ private fun CategoryPickerSheet(
     onPick: (String) -> Unit,
     onClear: () -> Unit,
     onSaveCustomCategory: (String) -> Unit,
+    onDeleteCustomCategory: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
-    // verticalScroll so quickPicks list + custom field are reachable on small screens
+    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+
+    val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
+    val effectiveCat = transaction?.effectiveCategory ?: "OTHER"
+    val hasOverride = transaction?.categoryOverride != null
+    val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
+        .sortedByDescending { it == effectiveCat }
+
+    // Effective category not covered by either list — surface it at top of Categories
+    val effectiveCatInQuickPicks = effectiveCat in quickPickCodes
+    val effectiveCatInCustom = effectiveCat in trulyCustomCategories
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 16.dp)
             .padding(bottom = 32.dp),
     ) {
-        // Sheet header — M3 style: prominent title + transaction name as subtitle
         Text(
             text = "Change category",
             style = MaterialTheme.typography.titleLarge,
@@ -1049,11 +1077,7 @@ private fun CategoryPickerSheet(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(8.dp))
 
-        // Custom categories the user has used before — exclude anything already in quick picks
-        val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
-        val selectedOverride = transaction?.categoryOverride
-        val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
-            .sortedByDescending { it == selectedOverride }
+        // "Your categories" — user-created names, with trailing delete icon
         if (trulyCustomCategories.isNotEmpty()) {
             Text(
                 text = "Your categories",
@@ -1066,8 +1090,9 @@ private fun CategoryPickerSheet(
                 CategoryPickerRow(
                     emoji = meta.emoji,
                     label = meta.displayName,
-                    selected = selectedOverride == cat,
-                    onPick = { if (selectedOverride == cat) onClear() else onPick(cat) },
+                    selected = effectiveCat == cat,
+                    onPick = { if (effectiveCat == cat && hasOverride) onClear() else onPick(cat) },
+                    onDelete = { onDeleteCustomCategory(cat) },
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -1075,9 +1100,10 @@ private fun CategoryPickerSheet(
             Spacer(Modifier.height(8.dp))
         }
 
-        // Plaid quick picks — selected item floats to top
-        val sortedQuickPicks = remember(selectedOverride) {
-            CategoryMeta.quickPicks.sortedByDescending { it.first == selectedOverride }
+        // "Categories" — Plaid quick picks; effective category floats to top.
+        // Orphan: effective category not in quick picks or custom list — show it first.
+        val sortedQuickPicks = remember(effectiveCat) {
+            CategoryMeta.quickPicks.sortedByDescending { it.first == effectiveCat }
         }
         Text(
             text = "Categories",
@@ -1085,12 +1111,21 @@ private fun CategoryPickerSheet(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
         )
+        if (!effectiveCatInQuickPicks && !effectiveCatInCustom) {
+            val orphanMeta = CategoryMeta.get(effectiveCat)
+            CategoryPickerRow(
+                emoji = orphanMeta.emoji,
+                label = orphanMeta.displayName,
+                selected = true,
+                onPick = { /* automatic — no override to clear */ },
+            )
+        }
         sortedQuickPicks.forEach { (code, meta) ->
             CategoryPickerRow(
                 emoji = meta.emoji,
                 label = meta.displayName,
-                selected = selectedOverride == code,
-                onPick = { if (selectedOverride == code) onClear() else onPick(code) },
+                selected = effectiveCat == code,
+                onPick = { if (effectiveCat == code && hasOverride) onClear() else onPick(code) },
             )
         }
 
@@ -1098,7 +1133,7 @@ private fun CategoryPickerSheet(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(12.dp))
 
-        // Custom free-text entry
+        // Custom free-text entry — "Add" saves to list without auto-assigning
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -1117,6 +1152,8 @@ private fun CategoryPickerSheet(
                     if (name.isNotBlank()) {
                         onSaveCustomCategory(name)
                         customInput = ""
+                        focusManager.clearFocus()
+                        scope.launch { scrollState.animateScrollTo(0) }
                     }
                 },
                 enabled = customInput.isNotBlank(),
@@ -1133,16 +1170,15 @@ private fun CategoryPickerRow(
     label: String,
     selected: Boolean,
     onPick: () -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // Minimum touch target: padding(vertical = 12.dp) + bodyMedium (≈20sp) ≥ 48dp.
             .clickable(onClickLabel = "Select $label") { onPick() }
-            .padding(vertical = 12.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Emoji is decorative — meaning conveyed by the adjacent label text
         Text(
             text = emoji,
             modifier = Modifier.width(32.dp),
@@ -1156,14 +1192,25 @@ private fun CategoryPickerRow(
             modifier = Modifier.weight(1f),
         )
         if (selected) {
-            // M3 Check icon — semantically paired with color+weight cues already conveying
-            // selection, so this is redundant/decorative from an a11y standpoint.
             Icon(
                 imageVector = Icons.Default.Check,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(18.dp),
             )
+        }
+        if (onDelete != null) {
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Remove $label",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }

@@ -153,6 +153,11 @@ class PoarVaultRepository(
         db.dao().upsertCustomCategory(CustomCategory(name))
     }
 
+    suspend fun deleteCustomCategory(name: String) {
+        db.dao().deleteCustomCategory(name)
+        db.dao().clearOverrideByCategory(name)
+    }
+
     // ── Transactions ──────────────────────────────────────────────────────────
 
     suspend fun refreshTransactions(institutionId: String) {
