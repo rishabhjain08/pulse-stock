@@ -34,7 +34,7 @@ enum class ReconcileFilter { TO_LINK, LINKED, DISMISSED, ALL }
 
 enum class SpendingWindow(val label: String) {
     STATEMENT("Statement"),
-    THIS_CYCLE("This cycle"),
+    THIS_CYCLE("Current Cycle"),
     LAST_30_DAYS("Last 30 days"),
     THIS_MONTH("This month"),
 }
