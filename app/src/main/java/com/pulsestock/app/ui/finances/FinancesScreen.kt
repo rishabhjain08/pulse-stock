@@ -133,6 +133,7 @@ import kotlin.math.atan2
 import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import com.pulsestock.app.BuildConfig
 import com.pulsestock.app.data.poarvault.AccountEntity
@@ -930,8 +931,9 @@ private fun CategoryBreakdownCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
+                val totalAmount = breakdown.sumOf { it.totalAmount }
                 displayList.forEachIndexed { index, spend ->
-                    CategoryRow(spend, onCategoryTap, currencyFmt)
+                    CategoryRow(spend, totalAmount, onCategoryTap, currencyFmt)
                     if (index < displayList.lastIndex) {
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -1119,10 +1121,13 @@ private fun SpendingDonutChart(
 @Composable
 private fun CategoryRow(
     spend: CategorySpend,
+    totalSpend: Double,
     onTap: (String) -> Unit,
     currencyFmt: NumberFormat,
 ) {
     val meta = CategoryMeta.get(spend.effectiveCategory)
+    val percent = if (totalSpend > 0) (spend.totalAmount / totalSpend * 100).roundToInt() else 0
+    
     // Minimum touch target: padding(vertical = 12.dp) + bodyMedium (≈20sp) ≥ 48dp total row height.
     Row(
         modifier = Modifier
@@ -1137,44 +1142,45 @@ private fun CategoryRow(
         // container that differentiates the emoji from the plain text content.
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHighest),
             contentAlignment = Alignment.Center,
         ) {
             // Emoji glyph — decorative; meaning conveyed by adjacent displayName text.
             Text(
                 text = meta.emoji,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.titleMedium,
             )
         }
         Spacer(Modifier.width(12.dp))
-        Text(
-            text = meta.displayName,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        // Transaction count chip — compact label style
-        Surface(
-            shape = MaterialTheme.shapes.extraSmall,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            modifier = Modifier.padding(end = 10.dp),
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "${spend.txCount}×",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                text = meta.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = "${spend.txCount} transaction${if (spend.txCount == 1) "" else "s"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(
-            text = currencyFmt.format(spend.totalAmount),
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = currencyFmt.format(spend.totalAmount),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = "$percent%",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

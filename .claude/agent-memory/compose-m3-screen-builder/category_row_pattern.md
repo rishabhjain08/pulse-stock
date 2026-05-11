@@ -1,15 +1,20 @@
 ---
-name: CategoryRow emoji pill and count chip pattern
-description: CategoryRow in FinancesScreen uses a Box-clipped emoji pill and a Surface chip for the transaction count
+name: Stacked Clean CategoryRow Pattern
+description: A professional, two-line category row with a larger emoji pill and stacked meta/amount details.
 type: project
 ---
 
-`CategoryRow` (inside `CategoryBreakdownCard`) uses two visual enhancements over plain text:
+`CategoryRow` (inside `CategoryBreakdownCard`) uses a "Stacked Clean" professional layout:
 
-1. **Emoji pill** — a 36dp × 36dp `Box` clipped to `RoundedCornerShape(8.dp)` with `background(MaterialTheme.colorScheme.surfaceContainerHighest)` contains the emoji glyph. This gives the emoji a subtle tonal backing that differentiates it from the plain text content around it. The emoji `Text` carries no `contentDescription` (decorative — meaning conveyed by adjacent `displayName` text).
+1. **Larger Emoji Pill** — A 40dp × 40dp `Box` clipped to `RoundedCornerShape(10.dp)` with `surfaceContainerHighest` background. The emoji uses `titleMedium` for better prominence and scans better than floating icons.
 
-2. **Transaction count chip** — a `Surface` with `shape = MaterialTheme.shapes.extraSmall` and `color = MaterialTheme.colorScheme.secondaryContainer` wraps the `"Nx"` count label. This converts the plain `labelSmall` count into a chip with proper containment and secondary tonal color, improving visual hierarchy over just `onSurfaceVariant` text.
+2. **Stacked Meta (Center)** — Category name (`bodyMedium`, `FontWeight.Medium`) stacked above the transaction count (`bodySmall`, `onSurfaceVariant`). This provides clear identity while tucking secondary details below the primary label.
 
-**Why:** The original implementation used a plain `Text(meta.emoji)` with `Modifier.width(32.dp)` — no background context. On a light theme the emoji floats without a container, making it hard to scan. The pill provides a consistent anchoring shape. The count chip makes the "how many transactions" info scannable at a glance without competing with the amount.
+3. **Stacked Financials (Right)** — Monospaced amount (`bodyMedium`, `SemiBold`) stacked above the percentage of total spend (`bodySmall`, `onSurfaceVariant`). Aligning these to the end creates a clean vertical gutter.
 
-**How to apply:** Any future list row that pairs an emoji glyph with a count should follow this pill + chip pattern. Use `surfaceContainerHighest` for the emoji pill background (one step above `surfaceContainerHigh` to ensure the pill reads against `surfaceContainerLow` cards).
+**Why:** The previous "chip" based design felt fragmented. This two-line approach is standard in high-end financial apps (like Apple Card or Monarch). It allows for more data density (adding percentages) without visual clutter.
+
+**How to apply:** 
+- Use `40.dp` for the icon container.
+- Use `Column(modifier = Modifier.weight(1f))` for the middle labels to push the amount to the end.
+- Always include `totalSpend: Double` to calculate and display the percentage.
