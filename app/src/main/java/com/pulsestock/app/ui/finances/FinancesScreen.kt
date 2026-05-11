@@ -1167,6 +1167,7 @@ private fun CategoryRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        Spacer(Modifier.width(16.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(
                 text = currencyFmt.format(spend.totalAmount),

@@ -16,5 +16,6 @@ type: project
 
 **How to apply:** 
 - Use `40.dp` for the icon container.
-- Use `Column(modifier = Modifier.weight(1f))` for the middle labels to push the amount to the end.
+- Use `Column(modifier = Modifier.weight(1f))` for the middle labels.
+- Add a `16.dp` horizontal `Spacer` between the label and amount columns to prevent visual crowding.
 - Always include `totalSpend: Double` to calculate and display the percentage.
