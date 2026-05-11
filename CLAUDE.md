@@ -45,4 +45,14 @@ The repo is public. API keys, keystore passwords, and service account credential
 - `local.properties` (gitignored) for local dev
 - GitHub Actions secrets for CI
 
-Read them via `System.getenv()` in `build.gradle.kts` or via `${{ secrets.NAME }}` in workflows. See `local.properties.template` for the expected keys.
+---
+
+## Diagnostic Toolkit
+
+Diagnostic scripts are located in `infra/scripts/`. They do not contain secrets and are used for troubleshooting the production environment.
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `verify-plaid.js` | Verifies Plaid credentials by calling `/link/token/create` directly from the local machine. | `NODE_PATH=infra/node_modules:infra/lambda/node_modules node infra/scripts/verify-plaid.js` |
+| `fetch-logs.js` | Fetches the latest CloudWatch logs for the `poarvault-link-token` Lambda. | `node infra/scripts/fetch-logs.js` |
+| `check-ssm.js` | Checks the Plaid credential values currently stored in AWS SSM (masking secrets). | `node infra/scripts/check-ssm.js` |
