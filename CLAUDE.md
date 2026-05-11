@@ -75,4 +75,12 @@ getParam('/poarvault/plaid-env', false) // returns ciphertext if type is SecureS
 getParam('/poarvault/plaid-env') // defaults to WithDecryption: true
 ```
 
-**Why:** Even if a parameter isn't "secret" (like `plaid-env`), if it is stored as a `SecureString` in SSM, fetching it without decryption returns the encrypted ciphertext. This causes hard-to-debug failures when the value is used for configuration (e.g., as a key for an environment object).
+---
+
+## Plaid Integration
+
+### Some institutions require `min_last_updated_datetime` for balances
+
+**Problem:** Calling `/accounts/balance/get` for institutions like Capital One (`ins_128026`) fails with `INVALID_FIELD` if `min_last_updated_datetime` is missing.
+
+**Solution:** Always provide a default `min_last_updated_datetime` (e.g., 30 days ago) in the `/balances` Lambda if not explicitly passed by the client. This satisfies the API requirement while allowing for cached data.
