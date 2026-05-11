@@ -343,19 +343,6 @@ fun FinancesScreen(
                                     currencyFmt = currencyFmt,
                                 )
 
-                                // ── Splitwise FilterChip (only when connected) ─────────
-                                if (state.isSplitwiseConnected) {
-                                    HorizontalDivider(
-                                        color = MaterialTheme.colorScheme.outlineVariant,
-                                        modifier = Modifier.padding(horizontal = 4.dp),
-                                    )
-                                    FilterChip(
-                                        selected = state.includeReimbursements,
-                                        onClick = vm::toggleIncludeReimbursements,
-                                        label = { Text("Subtract Splitwise reimbursable") },
-                                        modifier = Modifier.padding(horizontal = 4.dp),
-                                    )
-                                }
                             }
                         }
                     }
@@ -371,6 +358,11 @@ fun FinancesScreen(
                             onCategoryTap = vm::openCategoryDrillDown,
                             onManage = vm::openAllTransactionsDrillDown,
                             currencyFmt = currencyFmt,
+                            isSplitwiseConnected = state.isSplitwiseConnected,
+                            includeReimbursements = state.includeReimbursements,
+                            onToggleReimbursements = vm::toggleIncludeReimbursements,
+                            currentMonthReimbursable = state.currentMonthReimbursable,
+                            reimbursableByMonth = state.reimbursableByMonth,
                             spendingHistoryByMonth = state.spendingHistoryByMonth,
                             spendingHistoryByMonthAndMerchant = state.spendingHistoryByMonthAndMerchant,
                             allHistoryCategories = state.allHistoryCategories,
@@ -753,6 +745,11 @@ private fun CategoryBreakdownCard(
     onCategoryTap: (String) -> Unit,
     onManage: () -> Unit,
     currencyFmt: NumberFormat,
+    isSplitwiseConnected: Boolean,
+    includeReimbursements: Boolean,
+    onToggleReimbursements: () -> Unit,
+    currentMonthReimbursable: Double,
+    reimbursableByMonth: Map<YearMonth, Double>,
     spendingHistoryByMonth: List<MonthlySpendingHistory>,
     spendingHistoryByMonthAndMerchant: List<MonthlyMerchantHistory>,
     allHistoryCategories: List<CategoryAmount>,
@@ -793,6 +790,10 @@ private fun CategoryBreakdownCard(
                 onClearHistoryFilters = onClearHistoryFilters,
                 allCreditAccounts = allCreditAccounts,
                 historySelectedAccountIds = historySelectedAccountIds,
+                isSplitwiseConnected = isSplitwiseConnected,
+                includeReimbursements = includeReimbursements,
+                onToggleReimbursements = onToggleReimbursements,
+                reimbursableByMonth = reimbursableByMonth,
                 currencyFmt = currencyFmt,
             )
         }
@@ -865,6 +866,21 @@ private fun CategoryBreakdownCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // Splitwise reimbursable chip — disabled for windows that don't align with calendar month
+            val reimbursableChipEnabled = spendingWindow == SpendingWindow.LAST_30_DAYS ||
+                spendingWindow == SpendingWindow.THIS_MONTH
+            if (isSplitwiseConnected) {
+                Spacer(Modifier.height(4.dp))
+                FilterChip(
+                    selected = includeReimbursements,
+                    onClick = { if (reimbursableChipEnabled) onToggleReimbursements() },
+                    enabled = reimbursableChipEnabled,
+                    label = { Text("Subtract Splitwise") },
+                    leadingIcon = if (includeReimbursements) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                    } else null,
+                )
+            }
             // Account filter chips — only when 2+ cards connected
             if (filterAccounts.size > 1) {
                 Spacer(Modifier.height(8.dp))
@@ -898,6 +914,8 @@ private fun CategoryBreakdownCard(
                     breakdown = breakdown,
                     onSegmentTap = onCategoryTap,
                     currencyFmt = currencyFmt,
+                    reimbursableAmount = if (includeReimbursements) currentMonthReimbursable else 0.0,
+                    includeReimbursements = includeReimbursements,
                     modifier = Modifier
                         .align(Alignment.CenterHorizontally)
                         .padding(vertical = 8.dp),
@@ -990,6 +1008,8 @@ private fun SpendingDonutChart(
     breakdown: List<CategorySpend>,
     onSegmentTap: (String) -> Unit,
     currencyFmt: NumberFormat,
+    reimbursableAmount: Double = 0.0,
+    includeReimbursements: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val total = breakdown.sumOf { it.totalAmount }.toFloat()
@@ -1010,6 +1030,9 @@ private fun SpendingDonutChart(
         animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
         label = "donut_entry",
     )
+
+    val reimburseOverlayColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)
+    val netAmount = (total - reimbursableAmount.toFloat()).coerceAtLeast(0f)
 
     Box(
         modifier = modifier
@@ -1060,17 +1083,32 @@ private fun SpendingDonutChart(
                 )
                 startAngle += raw
             }
+            // Reimbursable overlay arc — drawn on top of category arcs
+            if (includeReimbursements && reimbursableAmount > 0) {
+                val reimburseAngle = ((reimbursableAmount / total).toFloat()
+                    .coerceIn(0f, 1f) * 360f * progress)
+                drawArc(
+                    color = reimburseOverlayColor,
+                    startAngle = -90f,
+                    sweepAngle = reimburseAngle,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Butt),
+                )
+            }
         }
-        // Center label: total spend
+        // Center label: net or total spend
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = currencyFmt.format(total.toDouble()),
+                text = if (includeReimbursements) currencyFmt.format(netAmount.toDouble())
+                       else currencyFmt.format(total.toDouble()),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                text = "total",
+                text = if (includeReimbursements) "net" else "total",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1803,6 +1841,10 @@ private fun SpendingHistorySheet(
     onClearHistoryFilters: () -> Unit,
     allCreditAccounts: List<AccountEntity>,
     historySelectedAccountIds: Set<String>?,
+    isSplitwiseConnected: Boolean,
+    includeReimbursements: Boolean,
+    onToggleReimbursements: () -> Unit,
+    reimbursableByMonth: Map<YearMonth, Double>,
     currencyFmt: NumberFormat,
 ) {
     var filterDialogOpen by rememberSaveable { mutableStateOf(false) }
@@ -1885,6 +1927,17 @@ private fun SpendingHistorySheet(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (isSplitwiseConnected) {
+                    Spacer(Modifier.height(6.dp))
+                    FilterChip(
+                        selected = includeReimbursements,
+                        onClick = onToggleReimbursements,
+                        label = { Text("Subtract Splitwise") },
+                        leadingIcon = if (includeReimbursements) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                        } else null,
+                    )
+                }
             }
             // Fix 5 — filter icon + count badges compound element
             // Tapping the icon OR the badge row opens the unified filter dialog.
@@ -1931,6 +1984,8 @@ private fun SpendingHistorySheet(
                 currencyFmt = currencyFmt,
                 tooltipBarIndex = tooltipBarIndex,
                 onTooltipChange = { tooltipBarIndex = it },
+                includeReimbursements = includeReimbursements,
+                reimbursableByMonth = reimbursableByMonth,
             )
 
             Spacer(Modifier.height(8.dp))
@@ -1972,6 +2027,8 @@ private fun HistoryStackedBarChart(
     currencyFmt: NumberFormat,
     tooltipBarIndex: Int?,
     onTooltipChange: (Int?) -> Unit,
+    includeReimbursements: Boolean = false,
+    reimbursableByMonth: Map<YearMonth, Double> = emptyMap(),
 ) {
     val monthSlots = remember { last12MonthSlots() }
 
@@ -2033,6 +2090,7 @@ private fun HistoryStackedBarChart(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val gridlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
     val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val netLineColor = MaterialTheme.colorScheme.secondary
 
     Box(modifier = Modifier.fillMaxWidth()) {
         // Y-axis labels (static, not clipped by chart scroll)
@@ -2158,6 +2216,22 @@ private fun HistoryStackedBarChart(
                             )
                             currentY = segTop
                         }
+                        // Net-spend line: horizontal tick at (total - reimbursable) height
+                        if (includeReimbursements && totalHeight > 0) {
+                            val yearMonth = java.time.YearMonth.parse(slot)
+                            val reimbursable = reimbursableByMonth[yearMonth] ?: 0.0
+                            if (reimbursable > 0) {
+                                val netAmount = (totalHeight - reimbursable).coerceAtLeast(0.0)
+                                val lineY = chartH - (netAmount / maxMonthTotal * chartH).toFloat()
+                                drawLine(
+                                    color = netLineColor,
+                                    start = Offset(barLeft - 2.dp.toPx(), lineY),
+                                    end = Offset(barLeft + barWidthPx + 2.dp.toPx(), lineY),
+                                    strokeWidth = 2.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+                        }
                     }
 
                     val yearMonth = java.time.YearMonth.parse(slot)
@@ -2272,6 +2346,29 @@ private fun HistoryStackedBarChart(
                                             color = MaterialTheme.colorScheme.primary,
                                         )
                                     }
+                                    if (includeReimbursements) {
+                                        val tooltipMonth = java.time.YearMonth.parse(slot)
+                                        val monthReimbursable = reimbursableByMonth[tooltipMonth] ?: 0.0
+                                        if (monthReimbursable > 0) {
+                                            val netTotal = (tooltipTotal - monthReimbursable).coerceAtLeast(0.0)
+                                            Row(modifier = Modifier.fillMaxWidth()) {
+                                                Text(
+                                                    text = "Net",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                                Text(
+                                                    text = currencyFmt.format(netTotal),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.secondary,
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2362,11 +2459,19 @@ private fun niceMax(rawMax: Double): Double {
     if (rawMax <= 0) return 1000.0
     val magnitude = 10.0.pow(floor(log10(rawMax)))
     val normalized = rawMax / magnitude
+    // Finer steps produce a tighter ceiling so bars fill more of the chart height.
+    // e.g. rawMax=320 → normalized=3.2 → nice=4.0 → ceiling=$400 (was $500 with coarse steps)
     val nice = when {
         normalized <= 1.0 -> 1.0
+        normalized <= 1.5 -> 1.5
         normalized <= 2.0 -> 2.0
+        normalized <= 2.5 -> 2.5
+        normalized <= 3.0 -> 3.0
+        normalized <= 4.0 -> 4.0
         normalized <= 5.0 -> 5.0
-        else -> 10.0
+        normalized <= 6.0 -> 6.0
+        normalized <= 8.0 -> 8.0
+        else              -> 10.0
     }
     return nice * magnitude
 }

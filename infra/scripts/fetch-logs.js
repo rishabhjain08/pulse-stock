@@ -7,7 +7,8 @@ const { loadEnv, cfg } = require('./_common');
   loadEnv();
   const logs = new CloudWatchLogsClient(cfg());
 
-  const logGroupName = '/aws/lambda/poarvault-link-token';
+  const lambdaName = process.argv[2] || 'link-token';
+  const logGroupName = `/aws/lambda/poarvault-${lambdaName}`;
   
   // 1. Get the latest log stream
   const { logStreams } = await logs.send(new DescribeLogStreamsCommand({
