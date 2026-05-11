@@ -189,7 +189,7 @@ class PoarVaultRepository(
             .groupBy { tx -> tx.date.take(7) } // "yyyy-MM"
             .flatMap { (monthStr, monthTxns) ->
                 monthTxns.groupBy { tx ->
-                    tx.categoryOverride ?: tx.pfcDetailed ?: tx.pfcPrimary ?: tx.category ?: "OTHER"
+                    tx.categoryOverride ?: tx.category ?: tx.pfcPrimary ?: "OTHER"
                 }.map { (cat, catTxns) ->
                     MonthlySpendRow(
                         month = monthStr,
@@ -341,15 +341,15 @@ class PoarVaultRepository(
 
     private fun buildCategoryBreakdownQuery(ranges: List<AccountDateRange>): SimpleSQLiteQuery {
         val sb = StringBuilder(
-            """SELECT COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') AS effectiveCategory,
+            """SELECT COALESCE(pt.categoryOverride, pt.category, pt.pfcPrimary, 'OTHER') AS effectiveCategory,
                SUM(pt.amount) AS totalAmount,
                COUNT(*) AS txCount
         FROM plaid_transactions pt
         INNER JOIN accounts a ON pt.accountId = a.accountId
         WHERE a.type = 'credit' 
           AND pt.amount > 0
-          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'TRANSFER%'
-          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
+          AND COALESCE(pt.categoryOverride, pt.category, '') NOT LIKE 'TRANSFER%'
+          AND COALESCE(pt.categoryOverride, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
           AND (
 """
         )
@@ -372,7 +372,7 @@ class PoarVaultRepository(
             """SELECT pt.* FROM plaid_transactions pt
         INNER JOIN accounts a ON pt.accountId = a.accountId
         WHERE a.type = 'credit'
-          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') IN ($placeholders)
+          AND COALESCE(pt.categoryOverride, pt.category, pt.pfcPrimary, 'OTHER') IN ($placeholders)
           AND ("""
         )
         val args = mutableListOf<Any>()

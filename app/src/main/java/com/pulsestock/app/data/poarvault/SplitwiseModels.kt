@@ -102,9 +102,9 @@ data class BalanceSnapshot(
     val currentBalance: Double?,    // from /balances
 )
 
-// Effective category priority: categoryOverride > pfcDetailed > pfcPrimary > category
+// Effective category priority: categoryOverride > category > pfcPrimary
 val PlaidTransaction.effectiveCategory: String
-    get() = categoryOverride ?: pfcDetailed ?: pfcPrimary ?: category ?: "OTHER"
+    get() = categoryOverride ?: category ?: pfcPrimary ?: "OTHER"
 
 data class CategorySpend(
     val effectiveCategory: String,
