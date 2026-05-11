@@ -78,6 +78,7 @@ class PoarVaultRepository(
 
     suspend fun refreshInstitution(institutionId: String) {
         val token = tokens.getAccessToken(institutionId) ?: return
+        PulseLog.d("PoarVaultRepo", "refreshInstitution: fetching balances for $institutionId")
         val balances = api.getBalances(token)
         val now = System.currentTimeMillis()
         val accounts = balances.accounts.map { a ->
@@ -94,6 +95,8 @@ class PoarVaultRepository(
             )
         }
         db.dao().upsertAccounts(accounts)
+        val creditCount = accounts.count { it.type == "credit" }
+        PulseLog.d("PoarVaultRepo", "refreshInstitution: upserted ${accounts.size} account(s), $creditCount are 'credit'")
         // Write a balance snapshot for each credit account so the history sheet has
         // current-balance data even before liabilities load. statementBalance is null here
         // and gets filled in by refreshLiabilities if available.
@@ -208,6 +211,9 @@ class PoarVaultRepository(
             SELECT pt.* FROM plaid_transactions pt
             INNER JOIN accounts a ON pt.accountId = a.accountId
             WHERE a.type = 'credit'
+              AND pt.amount > 0
+              AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'TRANSFER%'
+              AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
               AND pt.accountId IN ($placeholders)
               AND pt.date >= ?
             ORDER BY pt.date DESC
@@ -340,7 +346,12 @@ class PoarVaultRepository(
                COUNT(*) AS txCount
         FROM plaid_transactions pt
         INNER JOIN accounts a ON pt.accountId = a.accountId
-        WHERE a.type = 'credit' AND ("""
+        WHERE a.type = 'credit' 
+          AND pt.amount > 0
+          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'TRANSFER%'
+          AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
+          AND (
+"""
         )
         val args = mutableListOf<Any>()
         ranges.forEachIndexed { i, r ->

@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -161,6 +162,8 @@ data class FinancesUiState(
     val historySelectedCategories: Set<String>? = null,
     val historySelectedMerchants: Set<String>? = null,
     val historySelectedAccountIds: Set<String>? = null,
+    // Splitwise reimbursable per calendar month for the last 12 months (history overlay)
+    val reimbursableByMonth: Map<YearMonth, Double> = emptyMap(),
 ) {
     val displayedList: List<ExpenseWithLinks> get() = when (filter) {
         ReconcileFilter.TO_LINK   -> allWithLinks.filter { it.isUnlinked || it.isPendingAutoMatch }
@@ -245,6 +248,16 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value = _uiState.value.copy(currentMonthReimbursable = reimbursable)
                 }
         }
+        // 12-month reimbursable map for the history overlay
+        viewModelScope.launch {
+            val months = (0..11).map { YearMonth.now().minusMonths(it.toLong()) }
+            val flows = months.map { month -> splitwiseRepo.watchMonthlyReimbursable(month) }
+            combine(flows) { amounts ->
+                months.indices.associate { i -> months[i] to amounts[i] }
+            }.collect { map ->
+                _uiState.value = _uiState.value.copy(reimbursableByMonth = map)
+            }
+        }
         // Spending category breakdown — re-queries whenever window, selection, or accounts change
         viewModelScope.launch {
             _uiState
@@ -281,14 +294,11 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value = _uiState.value.copy(categoryBreakdown = merged, categoryCodeGroups = codeGroups)
                 }
         }
-        // Auto-load transactions + liabilities on session start
+        // Auto-load balances + transactions + liabilities on session start
         viewModelScope.launch {
             try {
-                PulseLog.d("FinancesVM", "auto-load: fetching transactions + liabilities")
-                db.dao().allInstitutionIds().forEach { id ->
-                    repo.refreshTransactions(id)
-                    repo.refreshLiabilities(id)
-                }
+                PulseLog.d("FinancesVM", "auto-load: starting full refresh")
+                repo.refreshAll()
                 PulseLog.d("FinancesVM", "auto-load: done")
             } catch (e: Exception) {
                 PulseLog.w("FinancesVM", "auto-load failed: ${e.message}")
