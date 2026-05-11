@@ -295,7 +295,7 @@ class PoarVaultRepository(
             return
         }
         val endDate = LocalDate.now().toString()
-        val startDate = LocalDate.now().minusDays(364).toString()
+        val startDate = LocalDate.now().minusDays(730).toString()
         PulseLog.d("PoarVaultRepo", "refreshTransactions: fetching $institutionId $startDate → $endDate")
         val resp = api.getTransactions(token, startDate, endDate)
         PulseLog.d("PoarVaultRepo", "refreshTransactions: total=${resp.totalTransactions} returned=${resp.transactions.size}")
