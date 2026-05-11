@@ -21,7 +21,7 @@ async function loadConfig() {
   const [clientId, secret, plaidEnv, key] = await Promise.all([
     getParam('/poarvault/plaid-client-id'),
     getParam('/poarvault/plaid-secret'),
-    getParam('/poarvault/plaid-env', false),
+    getParam('/poarvault/plaid-env'),
     getParam('/poarvault/api-key'),
   ]);
   apiKey = key;
