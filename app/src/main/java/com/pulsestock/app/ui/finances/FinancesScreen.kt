@@ -225,6 +225,7 @@ fun FinancesScreen(
                 customCategoriesMap = state.customCategoriesMap,
                 onPick = { category -> vm.applyOverride(overridingTx.transactionId, category) },
                 onRemoveOverride = { vm.removeOverride(overridingTx.transactionId) },
+                onRemoveRule = vm::removeRuleForMerchant,
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = vm::countTransactionsWithOverride,
@@ -248,6 +249,7 @@ fun FinancesScreen(
                 customCategoriesMap = state.customCategoriesMap,
                 onPick = { category -> vm.applyBulkCategory(category) },
                 onRemoveOverride = {},
+                onRemoveRule = {},
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
@@ -1428,6 +1430,7 @@ private fun CategoryPickerSheet(
     customCategoriesMap: Map<String, CustomCategory>,
     onPick: (String) -> Unit,
     onRemoveOverride: () -> Unit,
+    onRemoveRule: (String) -> Unit,
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
     countTransactionsWithOverride: suspend (String) -> Int,
@@ -1481,10 +1484,25 @@ private fun CategoryPickerSheet(
             title = { Text("Remove override?") },
             text = { Text("This transaction will go back to $defaultName.") },
             confirmButton = {
-                Button(
-                    onClick = { onRemoveOverride(); pendingRemoveOverride = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) { Text("Remove") }
+                // If the transaction has a merchantName, we allow removing for all.
+                // If not, we just show a single "Remove" button.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!transaction?.merchantName.isNullOrBlank()) {
+                        Button(
+                            onClick = { onRemoveRule(transaction!!.merchantName!!); pendingRemoveOverride = false },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) { Text("Remove for all") }
+                    }
+                    Button(
+                        onClick = { onRemoveOverride(); pendingRemoveOverride = false },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (transaction?.merchantName.isNullOrBlank()) MaterialTheme.colorScheme.error
+                                            else MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = if (transaction?.merchantName.isNullOrBlank()) MaterialTheme.colorScheme.onError
+                                          else MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                    ) { Text("Just this one") }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { pendingRemoveOverride = false }) { Text("Cancel") }
@@ -1539,7 +1557,7 @@ private fun CategoryPickerSheet(
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        text = if (showAlreadyDefaultHint) "This is the default category"
+                        text = if (showAlreadyDefaultHint) "This is the default category and cannot be unset. Select a different category to change it."
                                else "Tap a different category to change it",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,

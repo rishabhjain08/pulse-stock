@@ -296,6 +296,12 @@ class PoarVaultRepository(
         PulseLog.d("PoarVaultRepo", "applyRuleToAllMatching: $merchantName → $categoryId")
     }
 
+    suspend fun deleteRuleAndClearOverrides(merchantName: String) {
+        db.dao().deleteCategoryRule(merchantName)
+        db.dao().clearOverridesForMerchant(merchantName)
+        PulseLog.d("PoarVaultRepo", "deleteRuleAndClearOverrides: $merchantName")
+    }
+
     fun watchCustomCategories(): Flow<List<CustomCategory>> = db.dao().watchCustomCategories()
 
     suspend fun saveCustomCategory(category: CustomCategory) {

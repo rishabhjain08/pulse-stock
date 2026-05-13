@@ -600,6 +600,14 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun removeRuleForMerchant(merchantName: String) {
+        viewModelScope.launch {
+            repo.deleteRuleAndClearOverrides(merchantName)
+            _uiState.value = _uiState.value.copy(overridingTransaction = null)
+            refreshDrillDown()
+        }
+    }
+
     fun saveCustomCategory(name: String) {
         viewModelScope.launch { repo.saveCustomCategory(CustomCategory(id = java.util.UUID.randomUUID().toString(), name = name)) }
     }
