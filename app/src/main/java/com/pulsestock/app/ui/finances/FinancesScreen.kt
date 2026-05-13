@@ -266,21 +266,38 @@ fun FinancesScreen(
         val proposalMeta = CategoryMeta.resolveMeta(proposal.categoryId, state.customCategoriesMap)
         AlertDialog(
             onDismissRequest = vm::dismissMerchantRule,
-            title = { Text("Apply to all ${proposal.merchantName}?") },
+            title = { Text("Apply override?") },
             text = {
-                Text(
-                    "Also set ${proposalMeta.emoji} ${proposalMeta.displayName} for " +
-                    "${proposal.otherCount} other ${proposal.merchantName} " +
-                    "transaction${if (proposal.otherCount == 1) "" else "s"} " +
-                    "and save as a rule for future syncs."
-                )
+                Column {
+                    Text(
+                        "Also set ${proposalMeta.emoji} ${proposalMeta.displayName} for " +
+                        "${proposal.otherCount} other ${proposal.merchantName} " +
+                        "transaction${if (proposal.otherCount == 1) "" else "s"} " +
+                        "and save as a rule for future syncs."
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Tap anywhere outside to cancel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             },
             confirmButton = {
-                Button(onClick = vm::confirmMerchantRule) { Text("Yes") }
-            },
-            dismissButton = {
-                TextButton(onClick = vm::dismissMerchantRule) { Text("No") }
-            },
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = vm::confirmMerchantRule,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    ) { Text("Apply to all") }
+                    Button(
+                        onClick = vm::dismissMerchantRule,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                    ) { Text("Just this one") }
+                }
+            }
         )
     }
 
