@@ -1503,9 +1503,6 @@ private fun CategoryPickerSheet(
                         ),
                     ) { Text("Just this one") }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingRemoveOverride = false }) { Text("Cancel") }
             }
         )
     }
