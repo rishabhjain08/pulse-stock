@@ -340,6 +340,32 @@ class PoarVaultRepository(
         return proposals
     }
 
+    suspend fun proposeRuleRemovalForIds(
+        transactionIds: List<String>
+    ): List<MerchantRuleProposal> {
+        if (transactionIds.isEmpty()) return emptyList()
+        
+        // 1. Get merchant names for all transactions in selection
+        val merchants = db.dao().getTransactionsByIds(transactionIds)
+            .mapNotNull { it.merchantName }
+            .distinct()
+
+        // 2. Filter to only merchants that HAVE a persisted rule
+        val allRules = db.dao().getAllCategoryRules().associateBy { it.merchantName }
+        
+        val proposals = mutableListOf<MerchantRuleProposal>()
+        merchants.forEach { merchantName ->
+            val rule = allRules[merchantName]
+            if (rule != null) {
+                // Rule removal affects ALL transactions for this merchant.
+                // We show the total count to be clear about the scale.
+                val totalCount = db.dao().countTransactionsForMerchant(merchantName)
+                proposals.add(MerchantRuleProposal(merchantName, rule.categoryId, totalCount))
+            }
+        }
+        return proposals
+    }
+
     suspend fun executeCategoryOverrides(
         transactionIds: List<String>,
         categoryId: String?,

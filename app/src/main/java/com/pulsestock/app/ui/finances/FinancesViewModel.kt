@@ -120,7 +120,7 @@ data class MonthlyBalanceSnapshot(
 
 data class PendingApplyState(
     val transactionIds: List<String>,
-    val categoryId: String,
+    val categoryId: String?,
     val proposals: List<MerchantRuleProposal>,
     val approvedMerchantNames: List<String> = emptyList()
 )
@@ -746,12 +746,20 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         if (selectedIds.isEmpty()) return
 
         viewModelScope.launch {
-            repo.executeCategoryOverrides(selectedIds, null, emptyList())
-            _uiState.value = _uiState.value.copy(
-                showBulkRemovalWarning = false,
-                bulkSelectedIds = emptySet(),
-                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds
-            )
+            val proposals = repo.proposeRuleRemovalForIds(selectedIds)
+            if (proposals.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(
+                    showBulkRemovalWarning = false,
+                    pendingApplyState = PendingApplyState(selectedIds, null, proposals)
+                )
+            } else {
+                repo.executeCategoryOverrides(selectedIds, null, emptyList())
+                _uiState.value = _uiState.value.copy(
+                    showBulkRemovalWarning = false,
+                    bulkSelectedIds = emptySet(),
+                    sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds
+                )
+            }
         }
     }
 

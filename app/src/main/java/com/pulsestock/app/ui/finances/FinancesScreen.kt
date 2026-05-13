@@ -271,24 +271,30 @@ fun FinancesScreen(
     val pendingApply = state.pendingApplyState
     if (pendingApply != null && pendingApply.proposals.isNotEmpty()) {
         val proposal = pendingApply.proposals.first()
-        val proposalMeta = CategoryMeta.resolveMeta(pendingApply.categoryId, state.customCategoriesMap)
+        val proposalMeta = pendingApply.categoryId?.let { CategoryMeta.resolveMeta(it, state.customCategoriesMap) }
+        val isRemoval = pendingApply.categoryId == null
+        
         AlertDialog(
             onDismissRequest = { vm.cancelApplyOverride() },
-            title = { Text("Apply override?") },
+            title = { Text(if (isRemoval) "Remove rule?" else "Apply override?") },
             text = {
-                Text(
-                    "Also set ${proposalMeta.emoji} ${proposalMeta.displayName} for " +
+                val msg = if (isRemoval) {
+                    "Also remove the category rule for ${proposal.merchantName}? " +
+                    "This will revert all ${proposal.otherCount} transactions from this merchant back to their default category."
+                } else {
+                    "Also set ${proposalMeta?.emoji} ${proposalMeta?.displayName} for " +
                     "${proposal.otherCount} other ${proposal.merchantName} " +
                     "transaction${if (proposal.otherCount == 1) "" else "s"} " +
                     "and save as a rule for future syncs."
-                )
+                }
+                Text(msg)
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { vm.confirmApplyToAll() },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    ) { Text("Apply to all") }
+                        colors = ButtonDefaults.buttonColors(containerColor = if (isRemoval) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary),
+                    ) { Text(if (isRemoval) "Remove for all" else "Apply to all") }
                     Button(
                         onClick = { vm.confirmJustThisOne() },
                         colors = ButtonDefaults.buttonColors(
@@ -1307,12 +1313,31 @@ private fun CategoryDrillDownSheet(
                         modifier = Modifier.weight(1f),
                     )
                     if (isAllTransactionsMode) {
-                        IconButton(onClick = onToggleGroupByMerchant) {
-                            Icon(
-                                imageVector = if (groupByMerchant) Icons.AutoMirrored.Filled.ViewList else Icons.Default.Store,
-                                contentDescription = if (groupByMerchant) "Show individual" else "Group by merchant",
-                                tint = if (groupByMerchant) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Surface(
+                            onClick = onToggleGroupByMerchant,
+                            shape = MaterialTheme.shapes.small,
+                            color = if (groupByMerchant) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            border = if (!groupByMerchant) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+                            modifier = Modifier.padding(end = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (groupByMerchant) Icons.Default.Store else Icons.AutoMirrored.Filled.ViewList,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = if (groupByMerchant) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = if (groupByMerchant) "By Merchant" else "By Date",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (groupByMerchant) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                     IconButton(onClick = onDismiss) {

@@ -152,6 +152,9 @@ interface PoarVaultDao {
     @Query("SELECT COUNT(*) FROM plaid_transactions WHERE merchantName = :merchantName AND overrideCategoryId IS NOT NULL AND transactionId != :excludeId")
     suspend fun countOverridesForMerchant(merchantName: String, excludeId: String): Int
 
+    @Query("SELECT COUNT(*) FROM plaid_transactions WHERE merchantName = :merchantName")
+    suspend fun countTransactionsForMerchant(merchantName: String): Int
+
     @Query("SELECT * FROM category_rules WHERE merchantName = :merchantName LIMIT 1")
     suspend fun getRuleForMerchant(merchantName: String): CategoryRule?
 
