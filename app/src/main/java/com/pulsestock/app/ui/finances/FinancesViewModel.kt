@@ -642,8 +642,8 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     suspend fun countTransactionsWithOverride(name: String): Int =
         repo.countTransactionsWithOverride(name)
 
-    suspend fun countOverridesForMerchant(merchantName: String): Int =
-        repo.countOverridesForMerchant(merchantName)
+    suspend fun countOverridesForMerchant(merchantName: String, excludeId: String): Int =
+        repo.countOverridesForMerchant(merchantName, excludeId)
 
     private fun executePendingApply(state: PendingApplyState) {
         viewModelScope.launch {

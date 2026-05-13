@@ -254,7 +254,7 @@ fun FinancesScreen(
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
-                countOverridesForMerchant = { 0 },
+                countOverridesForMerchant = { _, _ -> 0 },
                 onDismiss = vm::closeBulkPicker,
                 isBulkMode = true,
                 bulkCount = state.bulkSelectedIds.size,
@@ -1446,7 +1446,7 @@ private fun CategoryPickerSheet(
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
     countTransactionsWithOverride: suspend (String) -> Int,
-    countOverridesForMerchant: suspend (String) -> Int,
+    countOverridesForMerchant: suspend (String, String) -> Int,
     onDismiss: () -> Unit,
     // Bulk mode: no pre-selection, custom title/subtitle
     isBulkMode: Boolean = false,
@@ -1456,7 +1456,7 @@ private fun CategoryPickerSheet(
     var showChangeHint by remember { mutableStateOf(false) }
     var showAlreadyDefaultHint by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Pair<CustomCategory, Int>?>(null) }
-    var pendingRemoveOverride by remember { mutableStateOf<Int?>(null) } // Number of matching overrides
+    var pendingRemoveOverride by remember { mutableStateOf<Int?>(null) } // Number of OTHER matching overrides
 
     LaunchedEffect(showChangeHint, showAlreadyDefaultHint) {
         if (showChangeHint || showAlreadyDefaultHint) {
@@ -1496,9 +1496,10 @@ private fun CategoryPickerSheet(
             onDismissRequest = { pendingRemoveOverride = null },
             title = { Text("Remove override?") },
             text = {
-                val msg = if (otherCount > 1 && !transaction?.merchantName.isNullOrBlank()) {
+                val msg = if (otherCount > 0 && !transaction?.merchantName.isNullOrBlank()) {
+                    val plural = if (otherCount == 1) "" else "s"
                     "This transaction will go back to $defaultName. " +
-                    "Also remove overrides for $otherCount other ${transaction!!.merchantName} transactions?"
+                    "Also remove overrides for $otherCount other ${transaction!!.merchantName} transaction$plural?"
                 } else {
                     "This transaction will go back to $defaultName."
                 }
@@ -1508,7 +1509,7 @@ private fun CategoryPickerSheet(
                 // If the transaction has a merchantName, we allow removing for all.
                 // If not, we just show a single "Remove" button.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!transaction?.merchantName.isNullOrBlank() && otherCount > 1) {
+                    if (!transaction?.merchantName.isNullOrBlank() && otherCount > 0) {
                         Button(
                             onClick = { onRemoveRule(transaction!!.merchantName!!); pendingRemoveOverride = null },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -1517,9 +1518,9 @@ private fun CategoryPickerSheet(
                     Button(
                         onClick = { onRemoveOverride(); pendingRemoveOverride = null },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (transaction?.merchantName.isNullOrBlank() || otherCount <= 1) MaterialTheme.colorScheme.error
+                            containerColor = if (transaction?.merchantName.isNullOrBlank() || otherCount == 0) MaterialTheme.colorScheme.error
                                             else MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = if (transaction?.merchantName.isNullOrBlank() || otherCount <= 1) MaterialTheme.colorScheme.onError
+                            contentColor = if (transaction?.merchantName.isNullOrBlank() || otherCount == 0) MaterialTheme.colorScheme.onError
                                           else MaterialTheme.colorScheme.onSecondaryContainer
                         ),
                     ) { Text("Just this one") }
@@ -1636,7 +1637,7 @@ private fun CategoryPickerSheet(
                         if (selected) {
                             if (transaction?.overrideCategoryId != null) {
                                 scope.launch {
-                                    val count = transaction.merchantName?.let { countOverridesForMerchant(it) } ?: 0
+                                    val count = transaction.merchantName?.let { countOverridesForMerchant(it, transaction.transactionId) } ?: 0
                                     pendingRemoveOverride = count
                                 }
                             } else {
@@ -1675,7 +1676,7 @@ private fun CategoryPickerSheet(
                 onPick = {
                     if (transaction?.overrideCategoryId != null) {
                         scope.launch {
-                            val count = transaction.merchantName?.let { countOverridesForMerchant(it) } ?: 0
+                            val count = transaction.merchantName?.let { countOverridesForMerchant(it, transaction.transactionId) } ?: 0
                             pendingRemoveOverride = count
                         }
                     } else {
@@ -1696,7 +1697,7 @@ private fun CategoryPickerSheet(
                     if (selected) {
                         if (transaction?.overrideCategoryId != null) {
                             scope.launch {
-                                val count = transaction.merchantName?.let { countOverridesForMerchant(it) } ?: 0
+                                val count = transaction.merchantName?.let { countOverridesForMerchant(it, transaction.transactionId) } ?: 0
                                 pendingRemoveOverride = count
                             }
                         } else {
