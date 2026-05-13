@@ -222,6 +222,7 @@ fun FinancesScreen(
                 customCategories = state.customCategories,
                 customCategoriesMap = state.customCategoriesMap,
                 onPick = { category -> vm.applyOverride(overridingTx.transactionId, category) },
+                onRemoveOverride = { vm.removeOverride(overridingTx.transactionId) },
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = vm::countTransactionsWithOverride,
@@ -244,6 +245,7 @@ fun FinancesScreen(
                 customCategories = state.customCategories,
                 customCategoriesMap = state.customCategoriesMap,
                 onPick = { category -> vm.applyBulkCategory(category) },
+                onRemoveOverride = {},
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
@@ -1423,6 +1425,7 @@ private fun CategoryPickerSheet(
     customCategories: List<CustomCategory>,
     customCategoriesMap: Map<String, CustomCategory>,
     onPick: (String) -> Unit,
+    onRemoveOverride: () -> Unit,
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
     countTransactionsWithOverride: suspend (String) -> Int,
@@ -1433,12 +1436,15 @@ private fun CategoryPickerSheet(
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
     var showChangeHint by remember { mutableStateOf(false) }
+    var showAlreadyDefaultHint by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Pair<CustomCategory, Int>?>(null) }
+    var pendingRemoveOverride by remember { mutableStateOf(false) }
 
-    LaunchedEffect(showChangeHint) {
-        if (showChangeHint) {
+    LaunchedEffect(showChangeHint, showAlreadyDefaultHint) {
+        if (showChangeHint || showAlreadyDefaultHint) {
             kotlinx.coroutines.delay(3000)
             showChangeHint = false
+            showAlreadyDefaultHint = false
         }
     }
     val scrollState = rememberScrollState()
@@ -1461,6 +1467,23 @@ private fun CategoryPickerSheet(
     // Effective category not covered by either list — surface it at top of Categories
     val isOrphan = effectiveCat != null && 
         customCategories.none { it.name == resolvedMeta?.displayName }
+
+    if (pendingRemoveOverride) {
+        AlertDialog(
+            onDismissRequest = { pendingRemoveOverride = false },
+            title = { Text("Remove override?") },
+            text = { Text("This transaction will go back to its default category.") },
+            confirmButton = {
+                Button(
+                    onClick = { onRemoveOverride(); pendingRemoveOverride = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoveOverride = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     pendingDelete?.let { (cat, count) ->
         AlertDialog(
@@ -1486,7 +1509,7 @@ private fun CategoryPickerSheet(
 
     Column(modifier = Modifier.fillMaxWidth()) {
         AnimatedVisibility(
-            visible = showChangeHint,
+            visible = showChangeHint || showAlreadyDefaultHint,
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
@@ -1509,7 +1532,8 @@ private fun CategoryPickerSheet(
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        text = "Tap a different category to change it",
+                        text = if (showAlreadyDefaultHint) "This is the default category"
+                               else "Tap a different category to change it",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
@@ -1567,8 +1591,12 @@ private fun CategoryPickerSheet(
                     selected = selected,
                     onPick = {
                         if (selected) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            showChangeHint = true
+                            if (transaction?.overrideCategoryId != null) {
+                                pendingRemoveOverride = true
+                            } else {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showAlreadyDefaultHint = true
+                            }
                         } else onPick(cat.id)
                     },
                     onDelete = {
@@ -1599,8 +1627,12 @@ private fun CategoryPickerSheet(
                 label = resolvedMeta.displayName,
                 selected = true,
                 onPick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    showChangeHint = true
+                    if (transaction?.overrideCategoryId != null) {
+                        pendingRemoveOverride = true
+                    } else {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        showAlreadyDefaultHint = true
+                    }
                 },
             )
         }
@@ -1613,8 +1645,12 @@ private fun CategoryPickerSheet(
                 selected = selected,
                 onPick = {
                     if (selected) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        showChangeHint = true
+                        if (transaction?.overrideCategoryId != null) {
+                            pendingRemoveOverride = true
+                        } else {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showAlreadyDefaultHint = true
+                        }
                     } else onPick(cat.id)
                 },
             )

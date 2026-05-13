@@ -25,6 +25,12 @@ interface PoarVaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAccounts(accounts: List<AccountEntity>)
 
+    @Query("UPDATE accounts SET currentBalance = :balance WHERE accountId = :accountId")
+    suspend fun updateCurrentBalance(accountId: String, balance: Double)
+
+    @Query("SELECT * FROM accounts WHERE institutionId = :institutionId")
+    suspend fun getAccountsForInstitution(institutionId: String): List<AccountEntity>
+
     @Query("SELECT accountId FROM accounts WHERE institutionId = :institutionId")
     suspend fun accountIdsForInstitution(institutionId: String): List<String>
 

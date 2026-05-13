@@ -573,6 +573,33 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private suspend fun refreshDrillDown() {
+        val state = _uiState.value
+        val ranges = currentSpendingRanges()
+        
+        // 1. Refresh category drill-down
+        val drillCategory = state.categoryDrillDown
+        if (drillCategory != null) {
+            val allCodes = state.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
+            val txns = repo.getTransactionsForCategory(ranges, allCodes)
+            _uiState.value = _uiState.value.copy(drillDownTransactions = txns)
+        }
+        
+        // 2. Refresh "All Transactions" mode if active
+        if (state.allTransactionsMode) {
+            val txns = repo.getTransactionsForWindow(ranges)
+            _uiState.value = _uiState.value.copy(drillDownTransactions = txns)
+        }
+    }
+
+    fun removeOverride(transactionId: String) {
+        viewModelScope.launch {
+            repo.setCategoryOverride(transactionId, null)
+            _uiState.value = _uiState.value.copy(overridingTransaction = null)
+            refreshDrillDown()
+        }
+    }
+
     fun saveCustomCategory(name: String) {
         viewModelScope.launch { repo.saveCustomCategory(CustomCategory(id = java.util.UUID.randomUUID().toString(), name = name)) }
     }
@@ -593,6 +620,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         )
         viewModelScope.launch {
             repo.applyRuleToAllMatching(proposal.merchantName, proposal.categoryId)
+            refreshDrillDown()
         }
     }
 
@@ -646,26 +674,15 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 if (p != null && seenMerchants.add(p.merchantName)) proposals.add(p)
             }
 
-            // Refresh the drill-down transaction list.
-            val drillCategory = _uiState.value.categoryDrillDown
-            val newTxns = when {
-                _uiState.value.allTransactionsMode ->
-                    repo.getTransactionsForWindow(currentSpendingRanges())
-                drillCategory != null -> {
-                    val allCodes = _uiState.value.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
-                    repo.getTransactionsForCategory(currentSpendingRanges(), allCodes)
-                }
-                else -> _uiState.value.drillDownTransactions
-            }
-
             _uiState.value = _uiState.value.copy(
-                bulkSelectedIds = emptySet(),
                 isBulkPickerOpen = false,
-                drillDownTransactions = newTxns,
+                isBulkMode = false,
+                bulkSelectedIds = emptySet(),
                 pendingMerchantRule = proposals.firstOrNull(),
                 pendingMerchantRuleQueue = proposals.drop(1),
                 sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds,
             )
+            refreshDrillDown()
         }
     }
 

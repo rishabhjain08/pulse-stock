@@ -81,7 +81,12 @@ class PoarVaultRepository(
         PulseLog.d("PoarVaultRepo", "refreshInstitution: fetching balances for $institutionId")
         val balances = api.getBalances(token)
         val now = System.currentTimeMillis()
+        
+        // Fetch existing accounts to preserve liabilities fields which /balances doesn't return
+        val existingAccounts = db.dao().getAccountsForInstitution(institutionId).associateBy { it.accountId }
+        
         val accounts = balances.accounts.map { a ->
+            val existing = existingAccounts[a.accountId]
             AccountEntity(
                 accountId = a.accountId,
                 institutionId = institutionId,
@@ -92,6 +97,11 @@ class PoarVaultRepository(
                 availableBalance = a.balances.available,
                 currencyCode = a.balances.isoCurrencyCode,
                 lastRefreshed = now,
+                // Preserve liabilities if already present
+                statementBalance = existing?.statementBalance,
+                minimumPayment = existing?.minimumPayment,
+                nextDueDate = existing?.nextDueDate,
+                lastStatementDate = existing?.lastStatementDate,
             )
         }
         db.dao().upsertAccounts(accounts)
@@ -124,6 +134,10 @@ class PoarVaultRepository(
         val liabilityCapturedAt = System.currentTimeMillis()
         resp.liabilities.credit?.forEach { liability ->
             PulseLog.d("PoarVaultRepo", "refreshLiabilities: accountId=${liability.accountId} statementBal=${liability.lastStatementBalance} statementDate=${liability.lastStatementIssueDate} dueDate=${liability.nextPaymentDueDate}")
+            
+            // Get current balance from the liabilities response to keep it in sync with the statement balance
+            val currentBal = resp.accounts.find { it.accountId == liability.accountId }?.balances?.current
+
             db.dao().updateLiability(
                 accountId = liability.accountId,
                 balance = liability.lastStatementBalance,
@@ -131,11 +145,14 @@ class PoarVaultRepository(
                 dueDate = liability.nextPaymentDueDate,
                 statementDate = liability.lastStatementIssueDate,
             )
+            
+            // Also update currentBalance if we got it from this response
+            if (currentBal != null) {
+                db.dao().updateCurrentBalance(liability.accountId, currentBal)
+            }
+
             // Write a snapshot with statementBalance populated (currentBalance from the
-            // accounts list in the liabilities response, if available). Monthly aggregation
-            // uses MAX(capturedAt) per account per month, so the liabilities snapshot —
-            // written seconds after the balances snapshot — will be the one surfaced.
-            val currentBal = resp.accounts.find { it.accountId == liability.accountId }?.balances?.current
+            // same liabilities call ensures temporal alignment).
             db.dao().insertBalanceSnapshot(
                 BalanceSnapshot(
                     accountId = liability.accountId,
