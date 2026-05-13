@@ -125,7 +125,7 @@ data class PendingApplyState(
     val approvedMerchantNames: List<String> = emptyList()
 )
 
-enum class ManageSortOrder { NAME, AMOUNT }
+enum class ManageSortOrder { NAME, AMOUNT, DATE }
 
 data class FinancesUiState(
     val creditAccounts: List<AccountEntity> = emptyList(),
@@ -740,33 +740,39 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = _uiState.value.copy(manageSortOrder = target)
     }
 
-    fun openBulkRemovalWarning() {
-        _uiState.value = _uiState.value.copy(showBulkRemovalWarning = true)
-    }
-
-    fun closeBulkRemovalWarning() {
-        _uiState.value = _uiState.value.copy(showBulkRemovalWarning = false)
-    }
-
-    fun applyBulkRemoveOverride() {
+    fun startBulkRemoveOverride() {
         val selectedIds = _uiState.value.bulkSelectedIds.toList()
         if (selectedIds.isEmpty()) return
 
         viewModelScope.launch {
             val proposals = repo.proposeRuleRemovalForIds(selectedIds)
             if (proposals.isNotEmpty()) {
+                // Rules exist: show the merged Rule Removal dialog (with 'Remove for all' / 'Just selected')
                 _uiState.value = _uiState.value.copy(
-                    showBulkRemovalWarning = false,
                     pendingApplyState = PendingApplyState(selectedIds, null, proposals)
                 )
             } else {
-                repo.executeCategoryOverrides(selectedIds, null, emptyList())
-                _uiState.value = _uiState.value.copy(
-                    showBulkRemovalWarning = false,
-                    bulkSelectedIds = emptySet(),
-                    sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds
-                )
+                // No rules: show the simple confirmation dialog
+                _uiState.value = _uiState.value.copy(showBulkRemovalWarning = true)
             }
+        }
+    }
+
+    fun closeBulkRemovalWarning() {
+        _uiState.value = _uiState.value.copy(showBulkRemovalWarning = false)
+    }
+
+    fun confirmBulkRemoveOverride() {
+        val selectedIds = _uiState.value.bulkSelectedIds.toList()
+        if (selectedIds.isEmpty()) return
+
+        viewModelScope.launch {
+            repo.executeCategoryOverrides(selectedIds, null, emptyList())
+            _uiState.value = _uiState.value.copy(
+                showBulkRemovalWarning = false,
+                bulkSelectedIds = emptySet(),
+                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds
+            )
         }
     }
 
