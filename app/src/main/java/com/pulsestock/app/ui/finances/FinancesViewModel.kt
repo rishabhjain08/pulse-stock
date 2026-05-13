@@ -125,6 +125,8 @@ data class PendingApplyState(
     val approvedMerchantNames: List<String> = emptyList()
 )
 
+enum class ManageSortOrder { NAME, AMOUNT }
+
 data class FinancesUiState(
     val creditAccounts: List<AccountEntity> = emptyList(),
     val allWithLinks: List<ExpenseWithLinks> = emptyList(),
@@ -164,6 +166,7 @@ data class FinancesUiState(
     // All-transactions mode: show every credit tx for the window, not filtered by category
     val allTransactionsMode: Boolean = false,
     val groupByMerchant: Boolean = true,
+    val manageSortOrder: ManageSortOrder = ManageSortOrder.AMOUNT,
     // When true, the UI shows a confirmation dialog before removing overrides for multiple selected transactions.
     val showBulkRemovalWarning: Boolean = false,
     // Transaction IDs recategorized in the current Manage session (reset when sheet closes)
@@ -731,6 +734,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleGroupByMerchant() {
         _uiState.value = _uiState.value.copy(groupByMerchant = !_uiState.value.groupByMerchant)
+    }
+
+    fun toggleManageSortOrder(target: ManageSortOrder) {
+        _uiState.value = _uiState.value.copy(manageSortOrder = target)
     }
 
     fun openBulkRemovalWarning() {

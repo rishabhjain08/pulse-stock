@@ -1262,6 +1262,8 @@ private fun CategoryDrillDownSheet(
     onOpenBulkPicker: () -> Unit = {},
     groupByMerchant: Boolean = false,
     onToggleGroupByMerchant: () -> Unit = {},
+    manageSortOrder: ManageSortOrder = ManageSortOrder.AMOUNT,
+    onToggleSortOrder: (ManageSortOrder) -> Unit = {},
     onBulkRemoveOverride: () -> Unit = {},
     customCategoriesMap: Map<String, CustomCategory>,
 ) {
@@ -1270,16 +1272,24 @@ private fun CategoryDrillDownSheet(
     val rowBgDefault = MaterialTheme.colorScheme.surfaceContainerHigh
 
     val displayRows = if (groupByMerchant && isAllTransactionsMode) {
-        transactions.groupBy { it.merchantName ?: it.name }
+        val groups = transactions.groupBy { it.merchantName ?: it.name }
             .map { (name, txns) ->
                 val totalAmount = txns.sumOf { it.amount }
                 // Sort within group by date desc
                 val sortedGroup = txns.sortedByDescending { it.date }
                 MerchantGroupRow(name, sortedGroup, totalAmount)
             }
-            .sortedByDescending { it.totalAmount }
+        
+        when (manageSortOrder) {
+            ManageSortOrder.NAME -> groups.sortedBy { it.merchantName.lowercase() }
+            ManageSortOrder.AMOUNT -> groups.sortedByDescending { it.totalAmount }
+        }
     } else {
-        transactions.map { IndividualRow(it) }
+        val flat = transactions.map { IndividualRow(it) }
+        when (manageSortOrder) {
+            ManageSortOrder.NAME -> flat.sortedBy { (it.tx.merchantName ?: it.tx.name).lowercase() }
+            ManageSortOrder.AMOUNT -> flat.sortedByDescending { it.tx.amount }
+        }
     }
 
     // Outer Box so the sticky bottom bar can overlay the scroll content.
@@ -1332,7 +1342,7 @@ private fun CategoryDrillDownSheet(
                                     tint = if (groupByMerchant) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = if (groupByMerchant) "By Merchant" else "By Date",
+                                    text = if (groupByMerchant) "Groups" else "Individual",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Medium,
                                     color = if (groupByMerchant) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
@@ -1368,7 +1378,61 @@ private fun CategoryDrillDownSheet(
                     )
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            // ── Column headers (Sortable) ─────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Spacer for checkbox column in bulk mode
+                if (isBulkMode) {
+                    Spacer(Modifier.width(32.dp))
+                }
+                
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onToggleSortOrder(ManageSortOrder.NAME) }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (groupByMerchant && isAllTransactionsMode) "Merchant" else "Transaction",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (manageSortOrder == ManageSortOrder.NAME) MaterialTheme.colorScheme.primary 
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (manageSortOrder == ManageSortOrder.NAME) FontWeight.Bold else FontWeight.Normal,
+                    )
+                    if (manageSortOrder == ManageSortOrder.NAME) {
+                        Icon(Icons.Default.ArrowDropDown, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clickable { onToggleSortOrder(ManageSortOrder.AMOUNT) }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Amount",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (manageSortOrder == ManageSortOrder.AMOUNT) MaterialTheme.colorScheme.primary 
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (manageSortOrder == ManageSortOrder.AMOUNT) FontWeight.Bold else FontWeight.Normal,
+                    )
+                    if (manageSortOrder == ManageSortOrder.AMOUNT) {
+                        Icon(Icons.Default.ArrowDropDown, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                // Spacer for edit icon column
+                if (!isBulkMode) {
+                    Spacer(Modifier.width(40.dp))
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
             Spacer(Modifier.height(4.dp))
 
             // ── List rows ─────────────────────────────────────────────────────
