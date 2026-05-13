@@ -268,20 +268,12 @@ fun FinancesScreen(
             onDismissRequest = vm::dismissMerchantRule,
             title = { Text("Apply override?") },
             text = {
-                Column {
-                    Text(
-                        "Also set ${proposalMeta.emoji} ${proposalMeta.displayName} for " +
-                        "${proposal.otherCount} other ${proposal.merchantName} " +
-                        "transaction${if (proposal.otherCount == 1) "" else "s"} " +
-                        "and save as a rule for future syncs."
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Tap anywhere outside to cancel",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    "Also set ${proposalMeta.emoji} ${proposalMeta.displayName} for " +
+                    "${proposal.otherCount} other ${proposal.merchantName} " +
+                    "transaction${if (proposal.otherCount == 1) "" else "s"} " +
+                    "and save as a rule for future syncs."
+                )
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
