@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
@@ -141,6 +142,7 @@ import com.pulsestock.app.data.poarvault.AccountEntity
 import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.effectiveCategory
+import com.pulsestock.app.data.poarvault.plaidFallbackCategory
 import com.pulsestock.app.data.poarvault.usesWindowHeuristic
 import java.text.NumberFormat
 import java.time.YearMonth
@@ -1468,11 +1470,16 @@ private fun CategoryPickerSheet(
     val isOrphan = effectiveCat != null && 
         customCategories.none { it.name == resolvedMeta?.displayName }
 
+    val defaultMeta = transaction?.let { 
+        CategoryMeta.getMetaForPlaidCode(it.plaidFallbackCategory) 
+    }
+    val defaultName = defaultMeta?.displayName ?: "its default category"
+
     if (pendingRemoveOverride) {
         AlertDialog(
             onDismissRequest = { pendingRemoveOverride = false },
             title = { Text("Remove override?") },
-            text = { Text("This transaction will go back to its default category.") },
+            text = { Text("This transaction will go back to $defaultName.") },
             confirmButton = {
                 Button(
                     onClick = { onRemoveOverride(); pendingRemoveOverride = false },
