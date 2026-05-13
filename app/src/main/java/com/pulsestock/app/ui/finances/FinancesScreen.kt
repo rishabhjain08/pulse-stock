@@ -229,6 +229,7 @@ fun FinancesScreen(
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = vm::countTransactionsWithOverride,
+                countOverridesForMerchant = vm::countOverridesForMerchant,
                 onDismiss = vm::cancelOverride,
             )
         }
@@ -253,6 +254,7 @@ fun FinancesScreen(
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
                 countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
+                countOverridesForMerchant = { 0 },
                 onDismiss = vm::closeBulkPicker,
                 isBulkMode = true,
                 bulkCount = state.bulkSelectedIds.size,
@@ -1443,6 +1445,7 @@ private fun CategoryPickerSheet(
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
     countTransactionsWithOverride: suspend (String) -> Int,
+    countOverridesForMerchant: suspend (String) -> Int,
     onDismiss: () -> Unit,
     // Bulk mode: no pre-selection, custom title/subtitle
     isBulkMode: Boolean = false,
@@ -1452,7 +1455,7 @@ private fun CategoryPickerSheet(
     var showChangeHint by remember { mutableStateOf(false) }
     var showAlreadyDefaultHint by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Pair<CustomCategory, Int>?>(null) }
-    var pendingRemoveOverride by remember { mutableStateOf(false) }
+    var pendingRemoveOverride by remember { mutableStateOf<Int?>(null) } // Number of matching overrides
 
     LaunchedEffect(showChangeHint, showAlreadyDefaultHint) {
         if (showChangeHint || showAlreadyDefaultHint) {
@@ -1487,27 +1490,35 @@ private fun CategoryPickerSheet(
     }
     val defaultName = defaultMeta?.displayName ?: "its default category"
 
-    if (pendingRemoveOverride) {
+    pendingRemoveOverride?.let { otherCount ->
         AlertDialog(
-            onDismissRequest = { pendingRemoveOverride = false },
+            onDismissRequest = { pendingRemoveOverride = null },
             title = { Text("Remove override?") },
-            text = { Text("This transaction will go back to $defaultName.") },
+            text = {
+                val msg = if (otherCount > 1 && !transaction?.merchantName.isNullOrBlank()) {
+                    "This transaction will go back to $defaultName. " +
+                    "Also remove overrides for $otherCount other ${transaction!!.merchantName} transactions?"
+                } else {
+                    "This transaction will go back to $defaultName."
+                }
+                Text(msg)
+            },
             confirmButton = {
                 // If the transaction has a merchantName, we allow removing for all.
                 // If not, we just show a single "Remove" button.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!transaction?.merchantName.isNullOrBlank()) {
+                    if (!transaction?.merchantName.isNullOrBlank() && otherCount > 1) {
                         Button(
-                            onClick = { onRemoveRule(transaction!!.merchantName!!); pendingRemoveOverride = false },
+                            onClick = { onRemoveRule(transaction!!.merchantName!!); pendingRemoveOverride = null },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                         ) { Text("Remove for all") }
                     }
                     Button(
-                        onClick = { onRemoveOverride(); pendingRemoveOverride = false },
+                        onClick = { onRemoveOverride(); pendingRemoveOverride = null },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (transaction?.merchantName.isNullOrBlank()) MaterialTheme.colorScheme.error
+                            containerColor = if (transaction?.merchantName.isNullOrBlank() || otherCount <= 1) MaterialTheme.colorScheme.error
                                             else MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = if (transaction?.merchantName.isNullOrBlank()) MaterialTheme.colorScheme.onError
+                            contentColor = if (transaction?.merchantName.isNullOrBlank() || otherCount <= 1) MaterialTheme.colorScheme.onError
                                           else MaterialTheme.colorScheme.onSecondaryContainer
                         ),
                     ) { Text("Just this one") }
@@ -1623,7 +1634,10 @@ private fun CategoryPickerSheet(
                     onPick = {
                         if (selected) {
                             if (transaction?.overrideCategoryId != null) {
-                                pendingRemoveOverride = true
+                                scope.launch {
+                                    val count = transaction.merchantName?.let { countOverridesForMerchant(it) } ?: 0
+                                    pendingRemoveOverride = count
+                                }
                             } else {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 showAlreadyDefaultHint = true
@@ -1659,7 +1673,10 @@ private fun CategoryPickerSheet(
                 selected = true,
                 onPick = {
                     if (transaction?.overrideCategoryId != null) {
-                        pendingRemoveOverride = true
+                        scope.launch {
+                            val count = transaction.merchantName?.let { countOverridesForMerchant(it) } ?: 0
+                            pendingRemoveOverride = count
+                        }
                     } else {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         showAlreadyDefaultHint = true
@@ -1677,7 +1694,10 @@ private fun CategoryPickerSheet(
                 onPick = {
                     if (selected) {
                         if (transaction?.overrideCategoryId != null) {
-                            pendingRemoveOverride = true
+                            scope.launch {
+                                val count = transaction.merchantName?.let { countOverridesForMerchant(it) } ?: 0
+                                pendingRemoveOverride = count
+                            }
                         } else {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             showAlreadyDefaultHint = true

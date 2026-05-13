@@ -619,6 +619,9 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     suspend fun countTransactionsWithOverride(name: String): Int =
         repo.countTransactionsWithOverride(name)
 
+    suspend fun countOverridesForMerchant(merchantName: String): Int =
+        repo.countOverridesForMerchant(merchantName)
+
     fun confirmMerchantRule() {
         val proposal = _uiState.value.pendingMerchantRule ?: return
         val queue = _uiState.value.pendingMerchantRuleQueue

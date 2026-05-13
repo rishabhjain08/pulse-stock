@@ -338,6 +338,9 @@ class PoarVaultRepository(
     suspend fun countTransactionsWithOverride(categoryId: String): Int =
         db.dao().countTransactionsWithOverride(categoryId)
 
+    suspend fun countOverridesForMerchant(merchantName: String): Int =
+        db.dao().countOverridesForMerchant(merchantName)
+
     suspend fun deleteCustomCategory(id: String) {
         db.dao().deleteCustomCategory(id)
         db.dao().clearOverrideByCategory(id)
