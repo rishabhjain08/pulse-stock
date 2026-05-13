@@ -84,10 +84,13 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
 
     fun onLinkSuccess(publicToken: String, institutionId: String, institutionName: String) {
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(syncingIds = _uiState.value.syncingIds + institutionId)
             try {
                 repo.onLinkSuccess(publicToken, institutionId, institutionName)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = "Couldn't connect bank: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(syncingIds = _uiState.value.syncingIds - institutionId)
             }
         }
     }

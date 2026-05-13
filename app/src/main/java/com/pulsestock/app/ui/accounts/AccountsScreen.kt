@@ -9,6 +9,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -410,13 +411,29 @@ private fun InstitutionCard(
                     color = MaterialTheme.colorScheme.outlineVariant,
                 )
                 iwa.accounts.forEachIndexed { index, account ->
-                    AccountRow(account, currencyFmt)
+                    AccountRow(account, currencyFmt, isSyncing)
                     if (index < iwa.accounts.lastIndex) {
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 4.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                         )
                     }
+                }
+            } else if (isSyncing) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                    )
                 }
             }
         }
@@ -437,7 +454,11 @@ private fun formatSyncTime(timestamp: Long): String {
 // ── Account balance row ────────────────────────────────────────────────────────
 
 @Composable
-private fun AccountRow(account: AccountEntity, currencyFmt: NumberFormat) {
+private fun AccountRow(
+    account: AccountEntity,
+    currencyFmt: NumberFormat,
+    isSyncing: Boolean,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -468,7 +489,19 @@ private fun AccountRow(account: AccountEntity, currencyFmt: NumberFormat) {
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+            } else if (isSyncing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Text(
+                    text = "—",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+
             val available = account.availableBalance
             if (available != null && available != current) {
                 Text(
