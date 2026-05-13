@@ -1278,7 +1278,7 @@ private fun CategoryDrillDownSheet(
                     ) { Text(text = meta.emoji, style = MaterialTheme.typography.titleLarge) }
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        text = meta.displayName,
+                        text = if (isAllTransactionsMode) "All Transactions" else meta.displayName,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,

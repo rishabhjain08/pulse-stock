@@ -652,7 +652,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 pendingApplyState = null,
                 overridingTransaction = null,
                 isBulkPickerOpen = false,
-                isBulkMode = false,
+                isBulkMode = _uiState.value.allTransactionsMode, // Keep active if in All Transactions view
                 bulkSelectedIds = emptySet(),
                 sessionCategorizedIds = _uiState.value.sessionCategorizedIds + state.transactionIds
             )
@@ -738,7 +738,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 repo.executeCategoryOverrides(selectedIds, category, emptyList())
                 _uiState.value = _uiState.value.copy(
                     isBulkPickerOpen = false,
-                    isBulkMode = false,
+                    isBulkMode = _uiState.value.allTransactionsMode, // Keep active if in All Transactions view
                     bulkSelectedIds = emptySet(),
                     sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds,
                 )
