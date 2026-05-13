@@ -51,11 +51,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
@@ -194,16 +196,19 @@ fun FinancesScreen(
                 category = state.categoryDrillDown,
                 transactions = state.drillDownTransactions,
                 currencyFmt = currencyFmt,
-                onEditCategory = vm::startOverride,
-                onDismiss = vm::closeCategoryDrillDown,
+                onEditCategory = { tx -> vm.startOverride(tx) },
+                onDismiss = { vm.closeCategoryDrillDown() },
                 isBulkMode = state.isBulkMode,
                 isAllTransactionsMode = state.allTransactionsMode,
                 bulkSelectedIds = state.bulkSelectedIds,
                 sessionCategorizedIds = state.sessionCategorizedIds,
-                onEnterBulkMode = vm::enterBulkMode,
-                onExitBulkMode = vm::exitBulkMode,
-                onToggleBulkSelection = vm::toggleBulkSelection,
-                onOpenBulkPicker = vm::openBulkPicker,
+                onEnterBulkMode = { vm.enterBulkMode() },
+                onExitBulkMode = { vm.exitBulkMode() },
+                onToggleBulkSelection = { id -> vm.toggleBulkSelection(id) },
+                onOpenBulkPicker = { vm.openBulkPicker() },
+                groupByMerchant = state.groupByMerchant,
+                onToggleGroupByMerchant = { vm.toggleGroupByMerchant() },
+                onBulkRemoveOverride = { vm.openBulkRemovalWarning() },
                 customCategoriesMap = state.customCategoriesMap,
             )
         }
@@ -268,7 +273,7 @@ fun FinancesScreen(
         val proposal = pendingApply.proposals.first()
         val proposalMeta = CategoryMeta.resolveMeta(pendingApply.categoryId, state.customCategoriesMap)
         AlertDialog(
-            onDismissRequest = vm::cancelApplyOverride,
+            onDismissRequest = { vm.cancelApplyOverride() },
             title = { Text("Apply override?") },
             text = {
                 Text(
@@ -281,17 +286,36 @@ fun FinancesScreen(
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = vm::confirmApplyToAll,
+                        onClick = { vm.confirmApplyToAll() },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     ) { Text("Apply to all") }
                     Button(
-                        onClick = vm::confirmJustThisOne,
+                        onClick = { vm.confirmJustThisOne() },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         ),
                     ) { Text(if (pendingApply.transactionIds.size > 1) "Just selected" else "Just this one") }
                 }
+            }
+        )
+    }
+
+    if (state.showBulkRemovalWarning) {
+        AlertDialog(
+            onDismissRequest = { vm.closeBulkRemovalWarning() },
+            title = { Text("Remove overrides?") },
+            text = {
+                Text("Remove overrides for ${state.bulkSelectedIds.size} transactions? They will go back to their default categories.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = { vm.applyBulkRemoveOverride() },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.closeBulkRemovalWarning() }) { Text("Cancel") }
             }
         )
     }
@@ -1230,11 +1254,28 @@ private fun CategoryDrillDownSheet(
     onExitBulkMode: () -> Unit = {},
     onToggleBulkSelection: (String) -> Unit = {},
     onOpenBulkPicker: () -> Unit = {},
+    groupByMerchant: Boolean = false,
+    onToggleGroupByMerchant: () -> Unit = {},
+    onBulkRemoveOverride: () -> Unit = {},
     customCategoriesMap: Map<String, CustomCategory>,
 ) {
     val meta = CategoryMeta.resolveMeta(category ?: "OTHER", customCategoriesMap)
     val rowBgSelected = MaterialTheme.colorScheme.secondaryContainer
     val rowBgDefault = MaterialTheme.colorScheme.surfaceContainerHigh
+
+    val displayRows = if (groupByMerchant && isAllTransactionsMode) {
+        transactions.groupBy { it.merchantName ?: it.name }
+            .map { (name, txns) ->
+                val totalAmount = txns.sumOf { it.amount }
+                // Sort within group by date desc
+                val sortedGroup = txns.sortedByDescending { it.date }
+                MerchantGroupRow(name, sortedGroup, totalAmount)
+            }
+            .sortedByDescending { it.totalAmount }
+    } else {
+        transactions.map { IndividualRow(it) }
+    }
+
     // Outer Box so the sticky bottom bar can overlay the scroll content.
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -1253,7 +1294,7 @@ private fun CategoryDrillDownSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (isBulkMode) {
-                    // Bulk mode: title left, X right — natural dismiss gesture
+                    // Bulk mode: title left, grouping toggle, X right
                     Text(
                         text = when {
                             bulkSelectedIds.isNotEmpty() -> "${bulkSelectedIds.size} selected"
@@ -1265,6 +1306,15 @@ private fun CategoryDrillDownSheet(
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
+                    if (isAllTransactionsMode) {
+                        IconButton(onClick = onToggleGroupByMerchant) {
+                            Icon(
+                                imageVector = if (groupByMerchant) Icons.AutoMirrored.Filled.ViewList else Icons.Default.Store,
+                                contentDescription = if (groupByMerchant) "Show individual" else "Group by merchant",
+                                tint = if (groupByMerchant) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
@@ -1296,10 +1346,21 @@ private fun CategoryDrillDownSheet(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(Modifier.height(4.dp))
 
-            // ── Transaction rows ───────────────────────────────────────────────
-            transactions.forEach { tx ->
-                val isSelected = tx.transactionId in bulkSelectedIds
-                val isTouched = isAllTransactionsMode && tx.transactionId in sessionCategorizedIds
+            // ── List rows ─────────────────────────────────────────────────────
+            displayRows.forEach { row ->
+                val isSelected = when (row) {
+                    is IndividualRow -> row.tx.transactionId in bulkSelectedIds
+                    is MerchantGroupRow -> row.txns.all { it.transactionId in bulkSelectedIds }
+                }
+                val isPartial = when (row) {
+                    is IndividualRow -> false
+                    is MerchantGroupRow -> !isSelected && row.txns.any { it.transactionId in bulkSelectedIds }
+                }
+                val isTouched = when (row) {
+                    is IndividualRow -> isAllTransactionsMode && row.tx.transactionId in sessionCategorizedIds
+                    is MerchantGroupRow -> isAllTransactionsMode && row.txns.all { it.transactionId in sessionCategorizedIds }
+                }
+                
                 val rowBgTouched = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
                 val rowBg by animateColorAsState(
                     when {
@@ -1309,62 +1370,124 @@ private fun CategoryDrillDownSheet(
                     },
                     label = "row_bg",
                 )
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(rowBg)
                         .then(
                             if (isBulkMode)
-                                Modifier.clickable { onToggleBulkSelection(tx.transactionId) }
+                                Modifier.clickable {
+                                    when (row) {
+                                        is IndividualRow -> onToggleBulkSelection(row.tx.transactionId)
+                                        is MerchantGroupRow -> {
+                                            val allIds = row.txns.map { it.transactionId }
+                                            if (isSelected) {
+                                                allIds.forEach { onToggleBulkSelection(it) }
+                                            } else {
+                                                allIds.forEach { id -> if (id !in bulkSelectedIds) onToggleBulkSelection(id) }
+                                            }
+                                        }
+                                    }
+                                }
                             else Modifier
                         )
                         .padding(vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (isBulkMode) {
-                        Checkbox(
-                            checked = isSelected,
-                            onCheckedChange = { onToggleBulkSelection(tx.transactionId) },
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
+                        if (isPartial) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 12.dp, end = 16.dp)
+                                    .size(18.dp)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(2.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                HorizontalDivider(modifier = Modifier.width(10.dp), thickness = 2.dp, color = Color.White)
+                            }
+                        } else {
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { 
+                                    if (row is IndividualRow) onToggleBulkSelection(row.tx.transactionId)
+                                    else {
+                                        val allIds = (row as MerchantGroupRow).txns.map { it.transactionId }
+                                        if (isSelected) allIds.forEach { onToggleBulkSelection(it) }
+                                        else allIds.forEach { id -> if (id !in bulkSelectedIds) onToggleBulkSelection(id) }
+                                    }
+                                },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
                     }
+
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = tx.name,
+                            text = when(row) {
+                                is IndividualRow -> row.tx.name
+                                is MerchantGroupRow -> row.merchantName.toTitleCase()
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = tx.date,
+                            text = when(row) {
+                                is IndividualRow -> row.tx.date
+                                is MerchantGroupRow -> "${row.txns.size} transactions"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (isAllTransactionsMode) {
-                            val txMeta = CategoryMeta.resolveMeta(tx.effectiveCategory, customCategoriesMap)
-                            Spacer(Modifier.height(3.dp))
-                            Surface(
-                                shape = MaterialTheme.shapes.extraSmall,
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                            ) {
+                        
+                        if (row is IndividualRow) {
+                            if (isAllTransactionsMode) {
+                                val txMeta = CategoryMeta.resolveMeta(row.tx.effectiveCategory, customCategoriesMap)
+                                Spacer(Modifier.height(3.dp))
+                                Surface(
+                                    shape = MaterialTheme.shapes.extraSmall,
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                ) {
+                                    Text(
+                                        text = "${txMeta.emoji} ${txMeta.displayName}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                            if (row.tx.overrideCategoryId != null) {
                                 Text(
-                                    text = "${txMeta.emoji} ${txMeta.displayName}",
+                                    text = "Overridden",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    color = MaterialTheme.colorScheme.tertiary,
                                 )
                             }
-                        }
-                        if (tx.overrideCategoryId != null) {
-                            Text(
-                                text = "Overridden",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                            )
+                        } else if (row is MerchantGroupRow) {
+                            val categories = row.txns.map { it.effectiveCategory }.distinct()
+                            if (categories.size == 1 && isAllTransactionsMode) {
+                                val txMeta = CategoryMeta.resolveMeta(categories.first(), customCategoriesMap)
+                                Spacer(Modifier.height(3.dp))
+                                Surface(
+                                    shape = MaterialTheme.shapes.extraSmall,
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                ) {
+                                    Text(
+                                        text = "${txMeta.emoji} ${txMeta.displayName}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                     Text(
-                        text = currencyFmt.format(tx.amount),
+                        text = currencyFmt.format(when(row) {
+                            is IndividualRow -> row.tx.amount
+                            is MerchantGroupRow -> row.totalAmount
+                        }),
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Medium,
@@ -1379,11 +1502,11 @@ private fun CategoryDrillDownSheet(
                             tint = MaterialTheme.colorScheme.tertiary,
                         )
                     }
-                    if (!isBulkMode) {
-                        IconButton(onClick = { onEditCategory(tx) }) {
+                    if (!isBulkMode && row is IndividualRow) {
+                        IconButton(onClick = { onEditCategory(row.tx) }) {
                             Icon(
                                 Icons.Default.Edit,
-                                contentDescription = "Change category for ${tx.name}",
+                                contentDescription = "Change category for ${row.tx.name}",
                                 modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1412,26 +1535,51 @@ private fun CategoryDrillDownSheet(
                 ) {
                     Text(
                         text = if (bulkSelectedIds.isEmpty()) "Tap rows to select"
-                               else "Assign to ${bulkSelectedIds.size} selected",
+                               else "${bulkSelectedIds.size} selected",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    FilledTonalButton(
-                        onClick = onOpenBulkPicker,
-                        enabled = bulkSelectedIds.isNotEmpty(),
-                    ) {
-                        Text("Category")
-                        Icon(
-                            Icons.Default.ArrowDropDown,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // "Clear" button for bulk removal of overrides
+                        if (bulkSelectedIds.isNotEmpty()) {
+                            FilledTonalButton(
+                                onClick = onBulkRemoveOverride,
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            ) {
+                                Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Clear")
+                            }
+                        }
+
+                        FilledTonalButton(
+                            onClick = onOpenBulkPicker,
+                            enabled = bulkSelectedIds.isNotEmpty(),
+                        ) {
+                            Text("Category")
+                            Icon(
+                                Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private sealed class DrillDownRow
+private data class IndividualRow(val tx: PlaidTransaction) : DrillDownRow()
+private data class MerchantGroupRow(
+    val merchantName: String,
+    val txns: List<PlaidTransaction>,
+    val totalAmount: Double
+) : DrillDownRow()
 
 // ── Category Override Picker ──────────────────────────────────────────────────
 

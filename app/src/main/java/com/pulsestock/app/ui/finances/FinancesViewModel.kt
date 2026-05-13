@@ -163,6 +163,9 @@ data class FinancesUiState(
     val isBulkPickerOpen: Boolean = false,
     // All-transactions mode: show every credit tx for the window, not filtered by category
     val allTransactionsMode: Boolean = false,
+    val groupByMerchant: Boolean = true,
+    // When true, the UI shows a confirmation dialog before removing overrides for multiple selected transactions.
+    val showBulkRemovalWarning: Boolean = false,
     // Transaction IDs recategorized in the current Manage session (reset when sheet closes)
     val sessionCategorizedIds: Set<String> = emptySet(),
     // One-shot flag: true when the ViewModel just auto-excluded business CCs due to a
@@ -587,6 +590,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             val txns = repo.getTransactionsForWindow(currentSpendingRanges())
             _uiState.value = _uiState.value.copy(
                 allTransactionsMode = true,
+                groupByMerchant = true,
                 drillDownTransactions = txns,
                 isBulkMode = true,
                 bulkSelectedIds = emptySet(),
@@ -648,13 +652,14 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     private fun executePendingApply(state: PendingApplyState) {
         viewModelScope.launch {
             repo.executeCategoryOverrides(state.transactionIds, state.categoryId, state.approvedMerchantNames)
-            _uiState.value = _uiState.value.copy(
+            val current = _uiState.value
+            _uiState.value = current.copy(
                 pendingApplyState = null,
                 overridingTransaction = null,
                 isBulkPickerOpen = false,
-                isBulkMode = _uiState.value.allTransactionsMode, // Keep active if in All Transactions view
+                isBulkMode = current.allTransactionsMode, // Keep active if in All Transactions view
                 bulkSelectedIds = emptySet(),
-                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + state.transactionIds
+                sessionCategorizedIds = current.sessionCategorizedIds + state.transactionIds
             )
         }
     }
@@ -722,6 +727,32 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
 
     fun closeBulkPicker() {
         _uiState.value = _uiState.value.copy(isBulkPickerOpen = false)
+    }
+
+    fun toggleGroupByMerchant() {
+        _uiState.value = _uiState.value.copy(groupByMerchant = !_uiState.value.groupByMerchant)
+    }
+
+    fun openBulkRemovalWarning() {
+        _uiState.value = _uiState.value.copy(showBulkRemovalWarning = true)
+    }
+
+    fun closeBulkRemovalWarning() {
+        _uiState.value = _uiState.value.copy(showBulkRemovalWarning = false)
+    }
+
+    fun applyBulkRemoveOverride() {
+        val selectedIds = _uiState.value.bulkSelectedIds.toList()
+        if (selectedIds.isEmpty()) return
+
+        viewModelScope.launch {
+            repo.executeCategoryOverrides(selectedIds, null, emptyList())
+            _uiState.value = _uiState.value.copy(
+                showBulkRemovalWarning = false,
+                bulkSelectedIds = emptySet(),
+                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds
+            )
+        }
     }
 
     fun applyBulkCategory(category: String) {
