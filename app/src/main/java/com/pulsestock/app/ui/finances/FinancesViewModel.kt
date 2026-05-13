@@ -674,13 +674,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             val selectedIds = _uiState.value.bulkSelectedIds.toList()
             if (selectedIds.isEmpty()) return@launch
 
-            // Apply override to all selected; collect unique merchant proposals.
-            val seenMerchants = mutableSetOf<String>()
-            val proposals = mutableListOf<MerchantRuleProposal>()
-            selectedIds.forEach { id ->
-                val p = repo.setCategoryOverride(id, category)
-                if (p != null && seenMerchants.add(p.merchantName)) proposals.add(p)
-            }
+            val proposals = repo.setCategoryOverrideForIds(selectedIds, category)
 
             _uiState.value = _uiState.value.copy(
                 isBulkPickerOpen = false,

@@ -289,6 +289,33 @@ class PoarVaultRepository(
         return if (otherCount > 0) MerchantRuleProposal(merchantName, override, otherCount) else null
     }
 
+    suspend fun setCategoryOverrideForIds(
+        transactionIds: List<String>,
+        categoryId: String,
+    ): List<MerchantRuleProposal> {
+        if (transactionIds.isEmpty()) return emptyList()
+        
+        // 1. Get merchant names for all transactions being updated
+        val merchants = db.dao().getTransactionsByIds(transactionIds)
+            .mapNotNull { it.merchantName }
+            .distinct()
+
+        // 2. Apply the override to all selected IDs
+        transactionIds.forEach { id ->
+            db.dao().setCategoryOverride(id, categoryId)
+        }
+
+        // 3. Check for any REMAINING transactions for these merchants
+        val proposals = mutableListOf<MerchantRuleProposal>()
+        merchants.forEach { merchantName ->
+            val otherCount = db.dao().countTransactionsForMerchantExcludingIds(merchantName, transactionIds)
+            if (otherCount > 0) {
+                proposals.add(MerchantRuleProposal(merchantName, categoryId, otherCount))
+            }
+        }
+        return proposals
+    }
+
     /** Applies [categoryId] to all existing transactions for [merchantName] and saves the rule. */
     suspend fun applyRuleToAllMatching(merchantName: String, categoryId: String) {
         db.dao().applyOverrideToMerchant(merchantName, categoryId)
