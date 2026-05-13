@@ -52,6 +52,19 @@ data class LinkSheetState(
     val all: List<PlaidTransaction>,
 )
 
+private data class BreakdownTrigger(
+    val window: SpendingWindow,
+    val selectedIds: Set<String>?,
+    val accounts: List<AccountEntity>,
+    val customMap: Map<String, CustomCategory>
+)
+
+private data class HistoryTrigger(
+    val allAccountIds: List<String>,
+    val historySelectedIds: Set<String>?,
+    val customMap: Map<String, CustomCategory>
+)
+
 /** One category bucket within a monthly spending history entry. */
 data class CategoryAmount(
     val effectiveCategory: String,
@@ -209,11 +222,17 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch {
+            CategoryMeta.coreCategories.forEach { repo.saveCustomCategory(it) }
+        }
+        viewModelScope.launch {
             db.dao().watchCreditCardAccounts().collect { accounts ->
                 val prev = _uiState.value
-                // Initialize selection to all accounts on first load
-                val selectedIds = prev.selectedSpendingAccountIds
-                    ?: accounts.map { it.accountId }.toSet()
+                // If selection was null or empty (initial state), select all accounts
+                val selectedIds = if (prev.selectedSpendingAccountIds.isNullOrEmpty() && accounts.isNotEmpty()) {
+                    accounts.map { it.accountId }.toSet()
+                } else {
+                    prev.selectedSpendingAccountIds
+                }
                 _uiState.value = prev.copy(
                     creditAccounts = accounts,
                     isSplitwiseConnected = splitwiseRepo.isConnected(),
@@ -260,22 +279,21 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 _uiState.value = _uiState.value.copy(reimbursableByMonth = map)
             }
         }
-        // Spending category breakdown — re-queries whenever window, selection, or accounts change
+        // Spending category breakdown — re-queries whenever window, selection, accounts, or categories change
         viewModelScope.launch {
             _uiState
-                .map { Triple(it.spendingWindow, it.selectedSpendingAccountIds, it.creditAccounts) }
+                .map { BreakdownTrigger(it.spendingWindow, it.selectedSpendingAccountIds, it.creditAccounts, it.customCategoriesMap) }
                 .distinctUntilChanged()
-                .flatMapLatest { (window, selectedIds, accounts) ->
-                    val effectiveAccounts = if (selectedIds == null) accounts
-                        else accounts.filter { it.accountId in selectedIds }
-                    if (effectiveAccounts.isEmpty()) return@flatMapLatest flowOf(emptyList())
-                    val ranges = buildAccountDateRanges(window, effectiveAccounts)
-                    val label = buildDateRangeLabel(window, ranges, effectiveAccounts)
+                .flatMapLatest { trigger ->
+                    val effectiveAccounts = if (trigger.selectedIds == null) trigger.accounts
+                        else trigger.accounts.filter { it.accountId in trigger.selectedIds }
+                    if (effectiveAccounts.isEmpty()) return@flatMapLatest flowOf(emptyList<CategorySpend>() to trigger.customMap)
+                    val ranges = buildAccountDateRanges(trigger.window, effectiveAccounts)
+                    val label = buildDateRangeLabel(trigger.window, ranges, effectiveAccounts)
                     _uiState.value = _uiState.value.copy(spendingDateRangeLabel = label)
-                    repo.watchCategoryBreakdown(ranges)
+                    repo.watchCategoryBreakdown(ranges).map { it to trigger.customMap }
                 }
-                .collect { breakdown ->
-                    val customMap = _uiState.value.customCategoriesMap
+                .collect { (breakdown, customMap) ->
                     // Group by display name so codes like ENTERTAINMENT_GYMS and
                     // PERSONAL_CARE_GYMS (both "Gym") or unmapped codes like TRAVEL_FLIGHTS
                     // ("Flights") merge into one row. Store all sibling codes per canonical
@@ -331,15 +349,14 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                 }
         }
         // Spending history — always uses all credit accounts as the universe; re-queries when
-        // credit accounts list or the history-specific account filter changes. Intentionally
-        // independent of the spending card window and selectedSpendingAccountIds.
+        // credit accounts list or the history-specific account filter or categories change.
         viewModelScope.launch {
             _uiState
-                .map { Pair(it.creditAccounts.map { a -> a.accountId }, it.historySelectedAccountIds) }
+                .map { HistoryTrigger(it.creditAccounts.map { a -> a.accountId }, it.historySelectedAccountIds, it.customCategoriesMap) }
                 .distinctUntilChanged()
-                .collect { (allAccountIds, historySelectedIds) ->
-                    val accountIds = if (historySelectedIds == null) allAccountIds
-                        else allAccountIds.filter { it in historySelectedIds }
+                .collect { trigger ->
+                    val accountIds = if (trigger.historySelectedIds == null) trigger.allAccountIds
+                        else trigger.allAccountIds.filter { it in trigger.historySelectedIds }
                     val (categoryRows, rawTxns) = try {
                         repo.getMonthlySpendingHistoryWithRaw(accountIds)
                     } catch (e: Exception) {
@@ -348,10 +365,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     }
                     val filteredTxns = if (accountIds.isEmpty()) emptyList()
                         else rawTxns.filter { it.accountId in accountIds }
-                    val customMap = _uiState.value.customCategoriesMap
-                    val history = aggregateSpendingHistory(categoryRows, customMap)
+                    
+                    val history = aggregateSpendingHistory(categoryRows, trigger.customMap)
                     val (merchantHistory, merchantSummaries) = aggregateMerchantHistory(filteredTxns)
-                    val allCategories = aggregateAllHistoryCategories(categoryRows, customMap)
+                    val allCategories = aggregateAllHistoryCategories(categoryRows, trigger.customMap)
                     _uiState.value = _uiState.value.copy(
                         spendingHistoryByMonth = history,
                         spendingHistoryByMonthAndMerchant = merchantHistory,
