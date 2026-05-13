@@ -149,6 +149,9 @@ interface PoarVaultDao {
     @Query("UPDATE plaid_transactions SET overrideCategoryId = NULL WHERE merchantName = :merchantName")
     suspend fun clearOverridesForMerchant(merchantName: String)
 
+    @Query("SELECT COUNT(*) FROM plaid_transactions WHERE merchantName = :merchantName AND overrideCategoryId IS NOT NULL AND transactionId NOT IN (:excludeIds)")
+    suspend fun countOverridesForMerchantExcludingIds(merchantName: String, excludeIds: List<String>): Int
+
     @Query("SELECT COUNT(*) FROM plaid_transactions WHERE merchantName = :merchantName AND overrideCategoryId IS NOT NULL AND transactionId != :excludeId")
     suspend fun countOverridesForMerchant(merchantName: String, excludeId: String): Int
 

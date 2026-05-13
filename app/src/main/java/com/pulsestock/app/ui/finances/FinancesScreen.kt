@@ -284,8 +284,9 @@ fun FinancesScreen(
             title = { Text(if (isRemoval) "Remove rule?" else "Apply override?") },
             text = {
                 val msg = if (isRemoval) {
-                    "Also remove the category rule for ${proposal.merchantName}? " +
-                    "This will revert all ${proposal.otherCount} transactions from this merchant back to their default category."
+                    val plural = if (proposal.otherCount == 1) "" else "s"
+                    val otherText = if (proposal.otherCount > 0) " and revert ${proposal.otherCount} other transaction$plural" else ""
+                    "Remove the category rule for ${proposal.merchantName}$otherText?"
                 } else {
                     "Also set ${proposalMeta?.emoji} ${proposalMeta?.displayName} for " +
                     "${proposal.otherCount} other ${proposal.merchantName} " +

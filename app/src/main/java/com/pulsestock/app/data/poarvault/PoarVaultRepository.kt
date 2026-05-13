@@ -350,17 +350,18 @@ class PoarVaultRepository(
             .mapNotNull { it.merchantName }
             .distinct()
 
-        // 2. Filter to only merchants that HAVE a persisted rule
+        // 2. Filter to merchants that either have a rule OR have other transactions with overrides
         val allRules = db.dao().getAllCategoryRules().associateBy { it.merchantName }
         
         val proposals = mutableListOf<MerchantRuleProposal>()
         merchants.forEach { merchantName ->
             val rule = allRules[merchantName]
-            if (rule != null) {
-                // Rule removal affects ALL transactions for this merchant.
-                // We show the total count to be clear about the scale.
-                val totalCount = db.dao().countTransactionsForMerchant(merchantName)
-                proposals.add(MerchantRuleProposal(merchantName, rule.categoryId, totalCount))
+            val otherOverridesCount = db.dao().countOverridesForMerchantExcludingIds(merchantName, transactionIds)
+            
+            if (rule != null || otherOverridesCount > 0) {
+                // Batch clearing affects others or a rule exists.
+                // Note: if no rule exists, we use "OTHER" as placeholder since we only care about the count and name for removal.
+                proposals.add(MerchantRuleProposal(merchantName, rule?.categoryId ?: "OTHER", otherOverridesCount))
             }
         }
         return proposals
