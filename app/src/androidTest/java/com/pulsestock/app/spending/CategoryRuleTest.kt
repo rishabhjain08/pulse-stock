@@ -45,7 +45,7 @@ class CategoryRuleTest {
         db.dao().upsertTransactions(listOf(
             tx("t1", merchantName = null, amount = 10.0),
         ))
-        val proposal = repo.setCategoryOverride("t1", "FOOD_AND_DRINK")
+        val proposal = repo.proposeCategoryOverride("t1", "FOOD_AND_DRINK")
         assertThat(proposal).isNull()
     }
 
@@ -54,7 +54,7 @@ class CategoryRuleTest {
         db.dao().upsertTransactions(listOf(
             tx("t1", merchantName = "Starbucks", amount = 5.0),
         ))
-        val proposal = repo.setCategoryOverride("t1", "FOOD_AND_DRINK")
+        val proposal = repo.proposeCategoryOverride("t1", "FOOD_AND_DRINK")
         assertThat(proposal).isNull()
     }
 
@@ -65,24 +65,14 @@ class CategoryRuleTest {
             tx("t2", merchantName = "Starbucks", amount = 6.0),
             tx("t3", merchantName = "Starbucks", amount = 7.0),
         ))
-        val proposal = repo.setCategoryOverride("t1", "FOOD_AND_DRINK")
+        val proposal = repo.proposeCategoryOverride("t1", "FOOD_AND_DRINK")
         assertThat(proposal).isNotNull()
         assertThat(proposal!!.merchantName).isEqualTo("Starbucks")
         assertThat(proposal.categoryId).isEqualTo("FOOD_AND_DRINK")
         assertThat(proposal.otherCount).isEqualTo(2) // t2 and t3
     }
 
-    @Test
-    fun noProposalWhenClearingOverride() = runTest {
-        db.dao().upsertTransactions(listOf(
-            tx("t1", merchantName = "Starbucks", amount = 5.0),
-            tx("t2", merchantName = "Starbucks", amount = 6.0),
-        ))
-        // First set an override, then clear it
-        repo.setCategoryOverride("t1", "FOOD_AND_DRINK")
-        val proposal = repo.setCategoryOverride("t1", null)
-        assertThat(proposal).isNull()
-    }
+
 
     // ── applyRuleToAllMatching ─────────────────────────────────────────────────
 

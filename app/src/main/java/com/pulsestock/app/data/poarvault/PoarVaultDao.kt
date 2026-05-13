@@ -86,6 +86,9 @@ interface PoarVaultDao {
     @RawQuery(observedEntities = [PlaidTransaction::class, AccountEntity::class])
     suspend fun getTransactionsForCategoryRaw(query: SupportSQLiteQuery): List<PlaidTransaction>
 
+    @RawQuery(observedEntities = [PlaidTransaction::class, AccountEntity::class])
+    fun watchTransactionsForCategoryRaw(query: SupportSQLiteQuery): Flow<List<PlaidTransaction>>
+
     // ── Category overrides ────────────────────────────────────────────────────
 
     @Query("UPDATE plaid_transactions SET overrideCategoryId = :categoryId WHERE transactionId = :id")

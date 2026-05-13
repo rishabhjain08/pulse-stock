@@ -118,6 +118,13 @@ data class MonthlyBalanceSnapshot(
     val snapshots: List<AccountBalancePoint>,
 )
 
+data class PendingApplyState(
+    val transactionIds: List<String>,
+    val categoryId: String,
+    val proposals: List<MerchantRuleProposal>,
+    val approvedMerchantNames: List<String> = emptyList()
+)
+
 data class FinancesUiState(
     val creditAccounts: List<AccountEntity> = emptyList(),
     val allWithLinks: List<ExpenseWithLinks> = emptyList(),
@@ -148,10 +155,8 @@ data class FinancesUiState(
     val overridingTransaction: PlaidTransaction? = null,
     val customCategories: List<CustomCategory> = emptyList(),
     val customCategoriesMap: Map<String, CustomCategory> = emptyMap(),
-    // Non-null when the user should be asked to apply an override to all matching transactions.
-    val pendingMerchantRule: MerchantRuleProposal? = null,
-    // Merchant rule dialogs queued up after a bulk-assign operation (shown sequentially).
-    val pendingMerchantRuleQueue: List<MerchantRuleProposal> = emptyList(),
+    // Tracks the state of an in-progress override operation that requires confirmation.
+    val pendingApplyState: PendingApplyState? = null,
     // Bulk categorization mode
     val isBulkMode: Boolean = false,
     val bulkSelectedIds: Set<String> = emptySet(),
@@ -354,27 +359,67 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             _uiState
                 .map { HistoryTrigger(it.creditAccounts.map { a -> a.accountId }, it.historySelectedAccountIds, it.customCategoriesMap) }
                 .distinctUntilChanged()
-                .collect { trigger ->
+                .flatMapLatest { trigger ->
                     val accountIds = if (trigger.historySelectedIds == null) trigger.allAccountIds
                         else trigger.allAccountIds.filter { it in trigger.historySelectedIds }
-                    val (categoryRows, rawTxns) = try {
-                        repo.getMonthlySpendingHistoryWithRaw(accountIds)
-                    } catch (e: Exception) {
-                        PulseLog.w("FinancesVM", "getMonthlySpendingHistory failed: ${e.message}")
-                        Pair(emptyList(), emptyList())
+                    
+                    repo.watchMonthlySpendingHistoryWithRaw(accountIds).map { data ->
+                        Triple(data, trigger.customMap, accountIds)
                     }
+                }
+                .collect { (data, customMap, accountIds) ->
+                    val (categoryRows, rawTxns) = data
+                    
                     val filteredTxns = if (accountIds.isEmpty()) emptyList()
                         else rawTxns.filter { it.accountId in accountIds }
                     
-                    val history = aggregateSpendingHistory(categoryRows, trigger.customMap)
+                    val history = aggregateSpendingHistory(categoryRows, customMap)
                     val (merchantHistory, merchantSummaries) = aggregateMerchantHistory(filteredTxns)
-                    val allCategories = aggregateAllHistoryCategories(categoryRows, trigger.customMap)
+                    val allCategories = aggregateAllHistoryCategories(categoryRows, customMap)
                     _uiState.value = _uiState.value.copy(
                         spendingHistoryByMonth = history,
                         spendingHistoryByMonthAndMerchant = merchantHistory,
                         topMerchantsForHistory = merchantSummaries,
                         allHistoryCategories = allCategories,
                     )
+                }
+        }
+
+        // Reactive Category Drill-down
+        viewModelScope.launch {
+            _uiState
+                .map { Triple(it.categoryDrillDown, it.spendingWindow, it.creditAccounts) }
+                .distinctUntilChanged { old, new -> 
+                    // Only re-trigger if category or window changed. 
+                    // Selection/accounts changes handled by the inner fetch logic.
+                    old.first == new.first && old.second == new.second
+                }
+                .flatMapLatest { (category, window, _) ->
+                    if (category == null) return@flatMapLatest flowOf(emptyList<PlaidTransaction>())
+                    val ranges = currentSpendingRanges()
+                    val allCodes = _uiState.value.categoryCodeGroups[category] ?: listOf(category)
+                    repo.watchTransactionsForCategory(ranges, allCodes)
+                }
+                .collect { txns ->
+                    if (_uiState.value.categoryDrillDown != null) {
+                        _uiState.value = _uiState.value.copy(drillDownTransactions = txns)
+                    }
+                }
+        }
+
+        // Reactive All Transactions Drill-down
+        viewModelScope.launch {
+            _uiState
+                .map { Pair(it.allTransactionsMode, it.spendingWindow) }
+                .distinctUntilChanged()
+                .flatMapLatest { (active, _) ->
+                    if (!active) return@flatMapLatest flowOf(emptyList<PlaidTransaction>())
+                    repo.watchTransactionsForWindow(currentSpendingRanges())
+                }
+                .collect { txns ->
+                    if (_uiState.value.allTransactionsMode) {
+                        _uiState.value = _uiState.value.copy(drillDownTransactions = txns)
+                    }
                 }
         }
     }
@@ -557,46 +602,25 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = _uiState.value.copy(overridingTransaction = null)
     }
 
-    fun applyOverride(transactionId: String, category: String?) {
+    fun applyOverride(transactionId: String, categoryId: String?) {
+        if (categoryId == null) return
         viewModelScope.launch {
-            val proposal = repo.setCategoryOverride(transactionId, category)
-            val drillCategory = _uiState.value.categoryDrillDown
-            val newState = if (drillCategory != null) {
-                val ranges = currentSpendingRanges()
-                val allCodes = _uiState.value.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
-                val txns = repo.getTransactionsForCategory(ranges, allCodes)
-                _uiState.value.copy(drillDownTransactions = txns, overridingTransaction = null)
+            val proposal = repo.proposeCategoryOverride(transactionId, categoryId)
+            if (proposal != null) {
+                _uiState.value = _uiState.value.copy(
+                    pendingApplyState = PendingApplyState(listOf(transactionId), categoryId, listOf(proposal))
+                )
             } else {
-                _uiState.value.copy(overridingTransaction = null)
+                repo.executeCategoryOverrides(listOf(transactionId), categoryId, emptyList())
+                _uiState.value = _uiState.value.copy(overridingTransaction = null)
             }
-            _uiState.value = newState.copy(pendingMerchantRule = proposal)
-        }
-    }
-
-    private suspend fun refreshDrillDown() {
-        val state = _uiState.value
-        val ranges = currentSpendingRanges()
-        
-        // 1. Refresh category drill-down
-        val drillCategory = state.categoryDrillDown
-        if (drillCategory != null) {
-            val allCodes = state.categoryCodeGroups[drillCategory] ?: listOf(drillCategory)
-            val txns = repo.getTransactionsForCategory(ranges, allCodes)
-            _uiState.value = _uiState.value.copy(drillDownTransactions = txns)
-        }
-        
-        // 2. Refresh "All Transactions" mode if active
-        if (state.allTransactionsMode) {
-            val txns = repo.getTransactionsForWindow(ranges)
-            _uiState.value = _uiState.value.copy(drillDownTransactions = txns)
         }
     }
 
     fun removeOverride(transactionId: String) {
         viewModelScope.launch {
-            repo.setCategoryOverride(transactionId, null)
+            repo.executeCategoryOverrides(listOf(transactionId), null, emptyList())
             _uiState.value = _uiState.value.copy(overridingTransaction = null)
-            refreshDrillDown()
         }
     }
 
@@ -604,7 +628,6 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             repo.deleteRuleAndClearOverrides(merchantName)
             _uiState.value = _uiState.value.copy(overridingTransaction = null)
-            refreshDrillDown()
         }
     }
 
@@ -622,25 +645,54 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     suspend fun countOverridesForMerchant(merchantName: String): Int =
         repo.countOverridesForMerchant(merchantName)
 
-    fun confirmMerchantRule() {
-        val proposal = _uiState.value.pendingMerchantRule ?: return
-        val queue = _uiState.value.pendingMerchantRuleQueue
-        _uiState.value = _uiState.value.copy(
-            pendingMerchantRule = queue.firstOrNull(),
-            pendingMerchantRuleQueue = queue.drop(1),
-        )
+    private fun executePendingApply(state: PendingApplyState) {
         viewModelScope.launch {
-            repo.applyRuleToAllMatching(proposal.merchantName, proposal.categoryId)
-            refreshDrillDown()
+            repo.executeCategoryOverrides(state.transactionIds, state.categoryId, state.approvedMerchantNames)
+            _uiState.value = _uiState.value.copy(
+                pendingApplyState = null,
+                overridingTransaction = null,
+                isBulkPickerOpen = false,
+                isBulkMode = false,
+                bulkSelectedIds = emptySet(),
+                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + state.transactionIds
+            )
         }
     }
 
-    fun dismissMerchantRule() {
-        val queue = _uiState.value.pendingMerchantRuleQueue
-        _uiState.value = _uiState.value.copy(
-            pendingMerchantRule = queue.firstOrNull(),
-            pendingMerchantRuleQueue = queue.drop(1),
+    fun confirmApplyToAll() {
+        val pending = _uiState.value.pendingApplyState ?: return
+        val currentProposal = pending.proposals.firstOrNull() ?: return
+        
+        val newApproved = pending.approvedMerchantNames + currentProposal.merchantName
+        val remainingProposals = pending.proposals.drop(1)
+        
+        val newState = pending.copy(
+            approvedMerchantNames = newApproved,
+            proposals = remainingProposals
         )
+        
+        if (remainingProposals.isEmpty()) {
+            executePendingApply(newState)
+        } else {
+            _uiState.value = _uiState.value.copy(pendingApplyState = newState)
+        }
+    }
+
+    fun confirmJustThisOne() {
+        val pending = _uiState.value.pendingApplyState ?: return
+        val remainingProposals = pending.proposals.drop(1)
+        
+        val newState = pending.copy(proposals = remainingProposals)
+        
+        if (remainingProposals.isEmpty()) {
+            executePendingApply(newState)
+        } else {
+            _uiState.value = _uiState.value.copy(pendingApplyState = newState)
+        }
+    }
+
+    fun cancelApplyOverride() {
+        _uiState.value = _uiState.value.copy(pendingApplyState = null)
     }
 
     // ── Bulk categorization mode ──────────────────────────────────────────────
@@ -677,17 +729,20 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             val selectedIds = _uiState.value.bulkSelectedIds.toList()
             if (selectedIds.isEmpty()) return@launch
 
-            val proposals = repo.setCategoryOverrideForIds(selectedIds, category)
-
-            _uiState.value = _uiState.value.copy(
-                isBulkPickerOpen = false,
-                isBulkMode = false,
-                bulkSelectedIds = emptySet(),
-                pendingMerchantRule = proposals.firstOrNull(),
-                pendingMerchantRuleQueue = proposals.drop(1),
-                sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds,
-            )
-            refreshDrillDown()
+            val proposals = repo.proposeCategoryOverrideForIds(selectedIds, category)
+            if (proposals.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(
+                    pendingApplyState = PendingApplyState(selectedIds, category, proposals)
+                )
+            } else {
+                repo.executeCategoryOverrides(selectedIds, category, emptyList())
+                _uiState.value = _uiState.value.copy(
+                    isBulkPickerOpen = false,
+                    isBulkMode = false,
+                    bulkSelectedIds = emptySet(),
+                    sessionCategorizedIds = _uiState.value.sessionCategorizedIds + selectedIds,
+                )
+            }
         }
     }
 

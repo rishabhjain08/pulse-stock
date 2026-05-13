@@ -4,7 +4,9 @@ import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.pulsestock.app.PulseLog
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
 /**
@@ -181,41 +183,58 @@ class PoarVaultRepository(
     // ── Spending history ──────────────────────────────────────────────────────
 
     /**
-     * One-shot query: returns all spending rows for the last 12 months grouped by
+     * returns all spending rows for the last 12 months grouped by
      * (month, effectiveCategory) for the given account IDs. Called from the ViewModel
      * whenever the relevant state changes.
      */
     suspend fun getMonthlySpendingHistory(accountIds: List<String>): List<MonthlySpendRow> {
-        return getMonthlySpendingHistoryWithRaw(accountIds).first
-    }
-
-    /**
-     * Same as [getMonthlySpendingHistory] but also returns the raw [PlaidTransaction] list in
-     * a single fetch. The ViewModel uses the raw list to derive merchant-level aggregates without
-     * a second database round-trip.
-     *
-     * Returns (categoryRows, rawTransactions).
-     */
-    suspend fun getMonthlySpendingHistoryWithRaw(
-        accountIds: List<String>,
-    ): Pair<List<MonthlySpendRow>, List<PlaidTransaction>> {
-        if (accountIds.isEmpty()) return Pair(emptyList(), emptyList())
+        if (accountIds.isEmpty()) return emptyList()
         val query = buildMonthlySpendingQuery(accountIds)
         val txns = db.dao().getTransactionsForCategoryRaw(query)
-        val rows = txns
-            .groupBy { tx -> tx.date.take(7) } // "yyyy-MM"
-            .flatMap { (monthStr, monthTxns) ->
+        return txns
+            .groupBy { it.date.take(7) } // "yyyy-MM"
+            .flatMap { entry ->
+                val monthStr = entry.key
+                val monthTxns = entry.value
                 monthTxns.groupBy { tx ->
                     tx.overrideCategoryId ?: tx.pfcDetailed ?: tx.pfcPrimary ?: tx.category ?: "OTHER"
-                }.map { (cat, catTxns) ->
+                }.map { catEntry ->
                     MonthlySpendRow(
                         month = monthStr,
-                        effectiveCategory = cat,
-                        totalAmount = catTxns.sumOf { it.amount },
+                        effectiveCategory = catEntry.key,
+                        totalAmount = catEntry.value.sumOf { it.amount },
                     )
                 }
             }
-        return Pair(rows, txns)
+    }
+
+    /**
+     * Same as [getMonthlySpendingHistory] but reactive.
+     * Returns a Flow of (categoryRows, rawTransactions).
+     */
+    fun watchMonthlySpendingHistoryWithRaw(
+        accountIds: List<String>,
+    ): Flow<Pair<List<MonthlySpendRow>, List<PlaidTransaction>>> {
+        if (accountIds.isEmpty()) return flowOf(Pair(emptyList(), emptyList()))
+        val query = buildMonthlySpendingQuery(accountIds)
+        return db.dao().watchTransactionsForCategoryRaw(query).map { txns ->
+            val rows = txns
+                .groupBy { it.date.take(7) } // "yyyy-MM"
+                .flatMap { entry ->
+                    val monthStr = entry.key
+                    val monthTxns = entry.value
+                    monthTxns.groupBy { tx ->
+                        tx.overrideCategoryId ?: tx.pfcDetailed ?: tx.pfcPrimary ?: tx.category ?: "OTHER"
+                    }.map { catEntry ->
+                        MonthlySpendRow(
+                            month = monthStr,
+                            effectiveCategory = catEntry.key,
+                            totalAmount = catEntry.value.sumOf { it.amount },
+                        )
+                    }
+                }
+            Pair(rows, txns)
+        }
     }
 
     private fun buildMonthlySpendingQuery(accountIds: List<String>): SimpleSQLiteQuery {
@@ -252,6 +271,21 @@ class PoarVaultRepository(
         return db.dao().watchCategoryBreakdownRaw(query)
     }
 
+    fun watchTransactionsForCategory(
+        ranges: List<AccountDateRange>,
+        categories: List<String>,
+    ): Flow<List<PlaidTransaction>> {
+        if (ranges.isEmpty() || categories.isEmpty()) return flowOf(emptyList())
+        val query = buildTransactionsForCategoryQuery(ranges, categories)
+        return db.dao().watchTransactionsForCategoryRaw(query)
+    }
+
+    fun watchTransactionsForWindow(ranges: List<AccountDateRange>): Flow<List<PlaidTransaction>> {
+        if (ranges.isEmpty()) return flowOf(emptyList())
+        val query = buildTransactionsForWindowQuery(ranges)
+        return db.dao().watchTransactionsForCategoryRaw(query)
+    }
+
     suspend fun getTransactionsForCategory(
         ranges: List<AccountDateRange>,
         categories: List<String>,
@@ -275,37 +309,27 @@ class PoarVaultRepository(
      * to all matching transactions, or null when no prompt is needed (clear override, or no
      * merchantName available, or this is the only transaction for that merchant).
      */
-    suspend fun setCategoryOverride(
+    suspend fun proposeCategoryOverride(
         transactionId: String,
-        override: String?,
+        categoryId: String,
     ): MerchantRuleProposal? {
-        // Read merchantName before writing so we don't need a second read.
         val merchantName = db.dao()
             .getTransactionsByIds(listOf(transactionId))
-            .firstOrNull()?.merchantName
-        db.dao().setCategoryOverride(transactionId, override)
-        if (override == null || merchantName == null) return null
+            .firstOrNull()?.merchantName ?: return null
+        
         val otherCount = db.dao().countOtherTransactionsForMerchant(merchantName, transactionId)
-        return if (otherCount > 0) MerchantRuleProposal(merchantName, override, otherCount) else null
+        return if (otherCount > 0) MerchantRuleProposal(merchantName, categoryId, otherCount) else null
     }
 
-    suspend fun setCategoryOverrideForIds(
+    suspend fun proposeCategoryOverrideForIds(
         transactionIds: List<String>,
         categoryId: String,
     ): List<MerchantRuleProposal> {
         if (transactionIds.isEmpty()) return emptyList()
-        
-        // 1. Get merchant names for all transactions being updated
         val merchants = db.dao().getTransactionsByIds(transactionIds)
             .mapNotNull { it.merchantName }
             .distinct()
 
-        // 2. Apply the override to all selected IDs
-        transactionIds.forEach { id ->
-            db.dao().setCategoryOverride(id, categoryId)
-        }
-
-        // 3. Check for any REMAINING transactions for these merchants
         val proposals = mutableListOf<MerchantRuleProposal>()
         merchants.forEach { merchantName ->
             val otherCount = db.dao().countTransactionsForMerchantExcludingIds(merchantName, transactionIds)
@@ -314,6 +338,27 @@ class PoarVaultRepository(
             }
         }
         return proposals
+    }
+
+    suspend fun executeCategoryOverrides(
+        transactionIds: List<String>,
+        categoryId: String?,
+        merchantRulesToApply: List<String>
+    ) {
+        merchantRulesToApply.forEach { merchantName ->
+            if (categoryId != null) {
+                db.dao().applyOverrideToMerchant(merchantName, categoryId)
+                db.dao().upsertCategoryRule(CategoryRule(merchantName, categoryId))
+                PulseLog.d("PoarVaultRepo", "executeCategoryOverrides: Rule applied $merchantName → $categoryId")
+            } else {
+                db.dao().deleteCategoryRule(merchantName)
+                db.dao().clearOverridesForMerchant(merchantName)
+                PulseLog.d("PoarVaultRepo", "executeCategoryOverrides: Rule removed $merchantName")
+            }
+        }
+        transactionIds.forEach { id ->
+            db.dao().setCategoryOverride(id, categoryId)
+        }
     }
 
     /** Applies [categoryId] to all existing transactions for [merchantName] and saves the rule. */

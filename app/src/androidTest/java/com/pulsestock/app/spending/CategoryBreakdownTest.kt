@@ -231,7 +231,7 @@ class CategoryBreakdownTest {
         db.dao().upsertTransactions(listOf(
             tx("t1", accountId = "cc_1", date = "2026-04-10", amount = 40.0, pfcPrimary = "SHOPS"),
         ))
-        repo.setCategoryOverride("t1", "PERSONAL_CARE")
+        repo.executeCategoryOverrides(listOf("t1"), "PERSONAL_CARE", emptyList())
         val breakdown = repo.watchCategoryBreakdown(ranges("cc_1", "2026-04-01", "2026-04-30")).first()
         assertThat(breakdown).hasSize(1)
         assertThat(breakdown[0].effectiveCategory).isEqualTo("PERSONAL_CARE")
@@ -243,7 +243,7 @@ class CategoryBreakdownTest {
             tx("t1", accountId = "cc_1", date = "2026-04-10", amount = 40.0,
                 pfcPrimary = "FOOD_AND_DRINK", overrideCategoryId = "MY_CUSTOM"),
         ))
-        repo.setCategoryOverride("t1", null)
+        repo.executeCategoryOverrides(listOf("t1"), null, emptyList())
         val breakdown = repo.watchCategoryBreakdown(ranges("cc_1", "2026-04-01", "2026-04-30")).first()
         assertThat(breakdown[0].effectiveCategory).isEqualTo("FOOD_AND_DRINK")
     }

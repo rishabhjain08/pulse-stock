@@ -263,11 +263,12 @@ fun FinancesScreen(
     }
 
     // Merchant rule confirmation dialog
-    val proposal = state.pendingMerchantRule
-    if (proposal != null) {
-        val proposalMeta = CategoryMeta.resolveMeta(proposal.categoryId, state.customCategoriesMap)
+    val pendingApply = state.pendingApplyState
+    if (pendingApply != null && pendingApply.proposals.isNotEmpty()) {
+        val proposal = pendingApply.proposals.first()
+        val proposalMeta = CategoryMeta.resolveMeta(pendingApply.categoryId, state.customCategoriesMap)
         AlertDialog(
-            onDismissRequest = vm::dismissMerchantRule,
+            onDismissRequest = vm::cancelApplyOverride,
             title = { Text("Apply override?") },
             text = {
                 Text(
@@ -280,16 +281,16 @@ fun FinancesScreen(
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = vm::confirmMerchantRule,
+                        onClick = vm::confirmApplyToAll,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     ) { Text("Apply to all") }
                     Button(
-                        onClick = vm::dismissMerchantRule,
+                        onClick = vm::confirmJustThisOne,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         ),
-                    ) { Text("Just this one") }
+                    ) { Text(if (pendingApply.transactionIds.size > 1) "Just selected" else "Just this one") }
                 }
             }
         )
