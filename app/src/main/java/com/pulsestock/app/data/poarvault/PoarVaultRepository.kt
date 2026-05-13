@@ -23,7 +23,7 @@ data class MonthlySpendRow(
  */
 data class MerchantRuleProposal(
     val merchantName: String,
-    val category: String,
+    val categoryId: String,
     val otherCount: Int,
 )
 
@@ -189,7 +189,7 @@ class PoarVaultRepository(
             .groupBy { tx -> tx.date.take(7) } // "yyyy-MM"
             .flatMap { (monthStr, monthTxns) ->
                 monthTxns.groupBy { tx ->
-                    tx.categoryOverride ?: tx.category ?: tx.pfcPrimary ?: "OTHER"
+                    tx.overrideCategoryId ?: tx.pfcDetailed ?: tx.pfcPrimary ?: tx.category ?: "OTHER"
                 }.map { (cat, catTxns) ->
                     MonthlySpendRow(
                         month = monthStr,
@@ -212,8 +212,8 @@ class PoarVaultRepository(
             INNER JOIN accounts a ON pt.accountId = a.accountId
             WHERE a.type = 'credit'
               AND pt.amount > 0
-              AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'TRANSFER%'
-              AND COALESCE(pt.categoryOverride, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
+              AND COALESCE(pt.overrideCategoryId, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'TRANSFER%'
+              AND COALESCE(pt.overrideCategoryId, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
               AND pt.accountId IN ($placeholders)
               AND pt.date >= ?
             ORDER BY pt.date DESC
@@ -272,25 +272,25 @@ class PoarVaultRepository(
         return if (otherCount > 0) MerchantRuleProposal(merchantName, override, otherCount) else null
     }
 
-    /** Applies [category] to all existing transactions for [merchantName] and saves the rule. */
-    suspend fun applyRuleToAllMatching(merchantName: String, category: String) {
-        db.dao().applyOverrideToMerchant(merchantName, category)
-        db.dao().upsertCategoryRule(CategoryRule(merchantName, category))
-        PulseLog.d("PoarVaultRepo", "applyRuleToAllMatching: $merchantName → $category")
+    /** Applies [categoryId] to all existing transactions for [merchantName] and saves the rule. */
+    suspend fun applyRuleToAllMatching(merchantName: String, categoryId: String) {
+        db.dao().applyOverrideToMerchant(merchantName, categoryId)
+        db.dao().upsertCategoryRule(CategoryRule(merchantName, categoryId))
+        PulseLog.d("PoarVaultRepo", "applyRuleToAllMatching: $merchantName → $categoryId")
     }
 
-    fun watchCustomCategories(): Flow<List<String>> = db.dao().watchCustomCategories()
+    fun watchCustomCategories(): Flow<List<CustomCategory>> = db.dao().watchCustomCategories()
 
-    suspend fun saveCustomCategory(name: String) {
-        db.dao().upsertCustomCategory(CustomCategory(name))
+    suspend fun saveCustomCategory(category: CustomCategory) {
+        db.dao().upsertCustomCategory(category)
     }
 
-    suspend fun countTransactionsWithOverride(category: String): Int =
-        db.dao().countTransactionsWithOverride(category)
+    suspend fun countTransactionsWithOverride(categoryId: String): Int =
+        db.dao().countTransactionsWithOverride(categoryId)
 
-    suspend fun deleteCustomCategory(name: String) {
-        db.dao().deleteCustomCategory(name)
-        db.dao().clearOverrideByCategory(name)
+    suspend fun deleteCustomCategory(id: String) {
+        db.dao().deleteCustomCategory(id)
+        db.dao().clearOverrideByCategory(id)
     }
 
     // ── Transactions ──────────────────────────────────────────────────────────
@@ -310,10 +310,10 @@ class PoarVaultRepository(
 
         val existingOverrides = db.dao()
             .getOverridesForIds(nonPending.map { it.transactionId })
-            .associate { it.transactionId to it.categoryOverride }
+            .associate { it.transactionId to it.overrideCategoryId }
 
         // Pre-load all rules so we don't query per-transaction in the loop.
-        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.category }
+        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.categoryId }
 
         val transactions = nonPending.map { t ->
             // Priority: explicit per-transaction override > saved merchant rule > none
@@ -329,7 +329,7 @@ class PoarVaultRepository(
                 category = t.category?.firstOrNull(),
                 pfcPrimary = t.personalFinanceCategory?.primary,
                 pfcDetailed = t.personalFinanceCategory?.detailed,
-                categoryOverride = override,
+                overrideCategoryId = override,
                 merchantName = t.merchantName,
             )
         }
@@ -341,17 +341,16 @@ class PoarVaultRepository(
 
     private fun buildCategoryBreakdownQuery(ranges: List<AccountDateRange>): SimpleSQLiteQuery {
         val sb = StringBuilder(
-            """SELECT COALESCE(pt.categoryOverride, pt.category, pt.pfcPrimary, 'OTHER') AS effectiveCategory,
+            """SELECT COALESCE(pt.overrideCategoryId, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') AS effectiveCategory,
                SUM(pt.amount) AS totalAmount,
                COUNT(*) AS txCount
         FROM plaid_transactions pt
         INNER JOIN accounts a ON pt.accountId = a.accountId
         WHERE a.type = 'credit' 
           AND pt.amount > 0
-          AND COALESCE(pt.categoryOverride, pt.category, '') NOT LIKE 'TRANSFER%'
-          AND COALESCE(pt.categoryOverride, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
-          AND (
-"""
+          AND COALESCE(pt.overrideCategoryId, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'TRANSFER%'
+          AND COALESCE(pt.overrideCategoryId, pt.pfcDetailed, pt.pfcPrimary, pt.category, '') NOT LIKE 'LOAN_PAYMENT%'
+          AND ("""
         )
         val args = mutableListOf<Any>()
         ranges.forEachIndexed { i, r ->
@@ -372,7 +371,7 @@ class PoarVaultRepository(
             """SELECT pt.* FROM plaid_transactions pt
         INNER JOIN accounts a ON pt.accountId = a.accountId
         WHERE a.type = 'credit'
-          AND COALESCE(pt.categoryOverride, pt.category, pt.pfcPrimary, 'OTHER') IN ($placeholders)
+          AND COALESCE(pt.overrideCategoryId, pt.pfcDetailed, pt.pfcPrimary, pt.category, 'OTHER') IN ($placeholders)
           AND ("""
         )
         val args = mutableListOf<Any>()

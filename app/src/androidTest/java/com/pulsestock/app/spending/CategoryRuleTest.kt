@@ -68,7 +68,7 @@ class CategoryRuleTest {
         val proposal = repo.setCategoryOverride("t1", "FOOD_AND_DRINK")
         assertThat(proposal).isNotNull()
         assertThat(proposal!!.merchantName).isEqualTo("Starbucks")
-        assertThat(proposal.category).isEqualTo("FOOD_AND_DRINK")
+        assertThat(proposal.categoryId).isEqualTo("FOOD_AND_DRINK")
         assertThat(proposal.otherCount).isEqualTo(2) // t2 and t3
     }
 
@@ -98,8 +98,8 @@ class CategoryRuleTest {
         val all = db.dao().getTransactionsByIds(listOf("t1", "t2", "t3"))
         val amazon = all.filter { it.merchantName == "Amazon" }
         val starbucks = all.first { it.merchantName == "Starbucks" }
-        assertThat(amazon.all { it.categoryOverride == "SHOPS" }).isTrue()
-        assertThat(starbucks.categoryOverride).isNull() // untouched
+        assertThat(amazon.all { it.overrideCategoryId == "SHOPS" }).isTrue()
+        assertThat(starbucks.overrideCategoryId).isNull() // untouched
     }
 
     @Test
@@ -109,7 +109,7 @@ class CategoryRuleTest {
 
         val rule = db.dao().getRuleForMerchant("Netflix")
         assertThat(rule).isNotNull()
-        assertThat(rule!!.category).isEqualTo("ENTERTAINMENT")
+        assertThat(rule!!.categoryId).isEqualTo("ENTERTAINMENT")
     }
 
     @Test
@@ -118,7 +118,7 @@ class CategoryRuleTest {
         repo.applyRuleToAllMatching("Uber", "FOOD_AND_DRINK") // user changed their mind
 
         val rule = db.dao().getRuleForMerchant("Uber")
-        assertThat(rule!!.category).isEqualTo("FOOD_AND_DRINK")
+        assertThat(rule!!.categoryId).isEqualTo("FOOD_AND_DRINK")
     }
 
     // ── refreshTransactions rule auto-apply ────────────────────────────────────
@@ -131,7 +131,7 @@ class CategoryRuleTest {
         db.dao().upsertCategoryRule(CategoryRule("Starbucks", "FOOD_AND_DRINK"))
 
         // Pre-load rules (as refreshTransactions does)
-        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.category }
+        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.categoryId }
 
         // Simulate a new incoming transaction with no existing override
         val newTx = tx("t_new", merchantName = "Starbucks", amount = 4.5)
@@ -147,9 +147,9 @@ class CategoryRuleTest {
         // User explicitly overrode this one transaction to a different category
         db.dao().setCategoryOverride("t1", "PERSONAL_CARE")
 
-        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.category }
+        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.categoryId }
         val existingOverrides = db.dao().getOverridesForIds(listOf("t1"))
-            .associate { it.transactionId to it.categoryOverride }
+            .associate { it.transactionId to it.overrideCategoryId }
 
         val tx = db.dao().getTransactionsByIds(listOf("t1")).first()
         val resolvedOverride = existingOverrides[tx.transactionId] ?: tx.merchantName?.let { rules[it] }
@@ -160,7 +160,7 @@ class CategoryRuleTest {
     @Test
     fun noRuleAppliedWhenMerchantNameIsNull() = runTest {
         db.dao().upsertCategoryRule(CategoryRule("Starbucks", "FOOD_AND_DRINK"))
-        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.category }
+        val rules = db.dao().getAllCategoryRules().associate { it.merchantName to it.categoryId }
 
         val txNoMerchant = tx("t1", merchantName = null, amount = 5.0)
         val resolvedOverride = null ?: txNoMerchant.merchantName?.let { rules[it] }

@@ -82,40 +82,33 @@ interface PoarVaultDao {
 
     // ── Category overrides ────────────────────────────────────────────────────
 
-    @Query("UPDATE plaid_transactions SET categoryOverride = :override WHERE transactionId = :id")
-    suspend fun setCategoryOverride(id: String, override: String?)
+    @Query("UPDATE plaid_transactions SET overrideCategoryId = :categoryId WHERE transactionId = :id")
+    suspend fun setCategoryOverride(id: String, categoryId: String?)
 
-    @Query("UPDATE plaid_transactions SET categoryOverride = :category WHERE merchantName = :merchantName")
-    suspend fun applyOverrideToMerchant(merchantName: String, category: String)
+    @Query("UPDATE plaid_transactions SET overrideCategoryId = :categoryId WHERE merchantName = :merchantName")
+    suspend fun applyOverrideToMerchant(merchantName: String, categoryId: String)
 
     /** Count transactions for this merchant that are NOT the transaction just overridden. */
     @Query("SELECT COUNT(*) FROM plaid_transactions WHERE merchantName = :merchantName AND transactionId != :excludeId")
     suspend fun countOtherTransactionsForMerchant(merchantName: String, excludeId: String): Int
 
-    @Query("SELECT transactionId, categoryOverride FROM plaid_transactions WHERE transactionId IN (:ids)")
+    @Query("SELECT transactionId, overrideCategoryId FROM plaid_transactions WHERE transactionId IN (:ids)")
     suspend fun getOverridesForIds(ids: List<String>): List<TransactionOverride>
 
-    // Union of explicitly saved custom names + any override values on transactions,
-    // so names persist even after being replaced on the transaction that introduced them.
-    @Query("""
-        SELECT name FROM custom_categories
-        UNION
-        SELECT DISTINCT categoryOverride AS name FROM plaid_transactions WHERE categoryOverride IS NOT NULL
-        ORDER BY name ASC
-    """)
-    fun watchCustomCategories(): Flow<List<String>>
+    @Query("SELECT * FROM custom_categories ORDER BY isCore DESC, name ASC")
+    fun watchCustomCategories(): Flow<List<CustomCategory>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsertCustomCategory(category: CustomCategory)
 
-    @Query("DELETE FROM custom_categories WHERE name = :name")
-    suspend fun deleteCustomCategory(name: String)
+    @Query("DELETE FROM custom_categories WHERE id = :id AND isCore = 0")
+    suspend fun deleteCustomCategory(id: String)
 
-    @Query("SELECT COUNT(*) FROM plaid_transactions WHERE categoryOverride = :category")
-    suspend fun countTransactionsWithOverride(category: String): Int
+    @Query("SELECT COUNT(*) FROM plaid_transactions WHERE overrideCategoryId = :categoryId")
+    suspend fun countTransactionsWithOverride(categoryId: String): Int
 
-    @Query("UPDATE plaid_transactions SET categoryOverride = NULL WHERE categoryOverride = :category")
-    suspend fun clearOverrideByCategory(category: String)
+    @Query("UPDATE plaid_transactions SET overrideCategoryId = NULL WHERE overrideCategoryId = :categoryId")
+    suspend fun clearOverrideByCategory(categoryId: String)
 
     // ── Balance snapshots ─────────────────────────────────────────────────────
 

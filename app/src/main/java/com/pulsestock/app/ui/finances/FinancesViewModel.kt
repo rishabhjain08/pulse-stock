@@ -9,6 +9,7 @@ import com.pulsestock.app.data.poarvault.BalanceSnapshot
 import com.pulsestock.app.data.poarvault.MerchantRuleProposal
 import com.pulsestock.app.data.poarvault.CategorySpend
 import com.pulsestock.app.ui.finances.CategoryMeta
+import com.pulsestock.app.data.poarvault.CustomCategory
 import com.pulsestock.app.data.poarvault.ExpenseWithLinks
 import com.pulsestock.app.data.poarvault.MonthlySpendRow
 import com.pulsestock.app.data.poarvault.PlaidTransaction
@@ -132,7 +133,8 @@ data class FinancesUiState(
     val categoryDrillDown: String? = null,
     val drillDownTransactions: List<PlaidTransaction> = emptyList(),
     val overridingTransaction: PlaidTransaction? = null,
-    val customCategories: List<String> = emptyList(),
+    val customCategories: List<CustomCategory> = emptyList(),
+    val customCategoriesMap: Map<String, CustomCategory> = emptyMap(),
     // Non-null when the user should be asked to apply an override to all matching transactions.
     val pendingMerchantRule: MerchantRuleProposal? = null,
     // Merchant rule dialogs queued up after a bulk-assign operation (shown sequentially).
@@ -273,11 +275,12 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     repo.watchCategoryBreakdown(ranges)
                 }
                 .collect { breakdown ->
+                    val customMap = _uiState.value.customCategoriesMap
                     // Group by display name so codes like ENTERTAINMENT_GYMS and
                     // PERSONAL_CARE_GYMS (both "Gym") or unmapped codes like TRAVEL_FLIGHTS
                     // ("Flights") merge into one row. Store all sibling codes per canonical
                     // code so drill-through can query all of them, not just the first.
-                    val grouped = breakdown.groupBy { CategoryMeta.get(it.effectiveCategory).displayName }
+                    val grouped = breakdown.groupBy { CategoryMeta.resolveMeta(it.effectiveCategory, customMap).displayName }
                     val merged = grouped.values.map { rows ->
                         rows.reduce { acc, row ->
                             CategorySpend(
@@ -306,7 +309,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repo.watchCustomCategories().collect { categories ->
-                _uiState.value = _uiState.value.copy(customCategories = categories)
+                _uiState.value = _uiState.value.copy(
+                    customCategories = categories,
+                    customCategoriesMap = categories.associateBy { it.id }
+                )
             }
         }
         // Balance snapshot history — re-queries whenever credit accounts list changes
@@ -342,9 +348,10 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
                     }
                     val filteredTxns = if (accountIds.isEmpty()) emptyList()
                         else rawTxns.filter { it.accountId in accountIds }
-                    val history = aggregateSpendingHistory(categoryRows)
+                    val customMap = _uiState.value.customCategoriesMap
+                    val history = aggregateSpendingHistory(categoryRows, customMap)
                     val (merchantHistory, merchantSummaries) = aggregateMerchantHistory(filteredTxns)
-                    val allCategories = aggregateAllHistoryCategories(categoryRows)
+                    val allCategories = aggregateAllHistoryCategories(categoryRows, customMap)
                     _uiState.value = _uiState.value.copy(
                         spendingHistoryByMonth = history,
                         spendingHistoryByMonthAndMerchant = merchantHistory,
@@ -550,7 +557,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveCustomCategory(name: String) {
-        viewModelScope.launch { repo.saveCustomCategory(name) }
+        viewModelScope.launch { repo.saveCustomCategory(CustomCategory(id = java.util.UUID.randomUUID().toString(), name = name)) }
     }
 
     fun deleteCustomCategory(name: String) {
@@ -568,7 +575,7 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
             pendingMerchantRuleQueue = queue.drop(1),
         )
         viewModelScope.launch {
-            repo.applyRuleToAllMatching(proposal.merchantName, proposal.category)
+            repo.applyRuleToAllMatching(proposal.merchantName, proposal.categoryId)
         }
     }
 
@@ -742,14 +749,14 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
      * [MonthlySpendingHistory] objects ordered most-recent first.
      * Applies the same display-name merging as the main breakdown (e.g. two Gym codes → one row).
      */
-    private fun aggregateSpendingHistory(rows: List<MonthlySpendRow>): List<MonthlySpendingHistory> {
+    private fun aggregateSpendingHistory(rows: List<MonthlySpendRow>, customCategoriesMap: Map<String, CustomCategory>): List<MonthlySpendingHistory> {
         return rows
             .groupBy { it.month } // "yyyy-MM"
             .entries
             .sortedByDescending { it.key }
             .map { (monthStr, monthRows) ->
                 // Merge sibling categories by display name — same logic as the main breakdown.
-                val byDisplayName = monthRows.groupBy { CategoryMeta.get(it.effectiveCategory).displayName }
+                val byDisplayName = monthRows.groupBy { CategoryMeta.resolveMeta(it.effectiveCategory, customCategoriesMap).displayName }
                 val mergedCategories = byDisplayName.values.map { group ->
                     CategoryAmount(
                         effectiveCategory = group.first().effectiveCategory,
@@ -772,8 +779,8 @@ class FinancesViewModel(application: Application) : AndroidViewModel(application
      * Aggregates all categories present across 12 months of history, sorted by total spend desc.
      * Used to populate the category filter dialog in the history sheet.
      */
-    private fun aggregateAllHistoryCategories(rows: List<MonthlySpendRow>): List<CategoryAmount> {
-        val byDisplayName = rows.groupBy { CategoryMeta.get(it.effectiveCategory).displayName }
+    private fun aggregateAllHistoryCategories(rows: List<MonthlySpendRow>, customCategoriesMap: Map<String, CustomCategory>): List<CategoryAmount> {
+        val byDisplayName = rows.groupBy { CategoryMeta.resolveMeta(it.effectiveCategory, customCategoriesMap).displayName }
         return byDisplayName.values.map { group ->
             CategoryAmount(
                 effectiveCategory = group.first().effectiveCategory,

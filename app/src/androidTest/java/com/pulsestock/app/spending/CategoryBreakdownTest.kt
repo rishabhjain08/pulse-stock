@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.pulsestock.app.data.poarvault.AccountDateRange
 import com.pulsestock.app.data.poarvault.AccountEntity
+import com.pulsestock.app.data.poarvault.CustomCategory
 import com.pulsestock.app.data.poarvault.InstitutionEntity
 import com.pulsestock.app.data.poarvault.PlaidTransaction
 import com.pulsestock.app.data.poarvault.PoarVaultApi
@@ -151,7 +152,7 @@ class CategoryBreakdownTest {
         db.dao().upsertTransactions(listOf(
             tx("t1", accountId = "cc_1", date = "2026-04-10", amount = 40.0,
                 category = "Food", pfcPrimary = "FOOD_AND_DRINK", pfcDetailed = "FOOD_AND_DRINK_RESTAURANTS",
-                categoryOverride = "MY_CUSTOM"),
+                overrideCategoryId = "MY_CUSTOM"),
         ))
         val breakdown = repo.watchCategoryBreakdown(ranges("cc_1", "2026-04-01", "2026-04-30")).first()
         assertThat(breakdown[0].effectiveCategory).isEqualTo("MY_CUSTOM")
@@ -204,7 +205,7 @@ class CategoryBreakdownTest {
             tx("t3", accountId = "cc_1", date = "2026-04-12", amount = 35.0, pfcDetailed = "FOOD_AND_DRINK_RESTAURANTS"),
         ))
         val txns = repo.getTransactionsForCategory(
-            ranges("cc_1", "2026-04-01", "2026-04-30"), "FOOD_AND_DRINK_RESTAURANTS"
+            ranges("cc_1", "2026-04-01", "2026-04-30"), listOf("FOOD_AND_DRINK_RESTAURANTS")
         )
         assertThat(txns).hasSize(2)
         assertThat(txns.map { it.transactionId }).containsExactly("t1", "t3")
@@ -217,7 +218,7 @@ class CategoryBreakdownTest {
             tx("t2", accountId = "dep_1", date = "2026-04-10", amount = 99.0, pfcPrimary = "SHOPS"),
         ))
         val txns = repo.getTransactionsForCategory(
-            ranges("cc_1", "2026-04-01", "2026-04-30"), "SHOPS"
+            ranges("cc_1", "2026-04-01", "2026-04-30"), listOf("SHOPS")
         )
         assertThat(txns).hasSize(1)
         assertThat(txns[0].transactionId).isEqualTo("t1")
@@ -240,7 +241,7 @@ class CategoryBreakdownTest {
     fun clearingOverrideRevealsPfcCategory() = runTest {
         db.dao().upsertTransactions(listOf(
             tx("t1", accountId = "cc_1", date = "2026-04-10", amount = 40.0,
-                pfcPrimary = "FOOD_AND_DRINK", categoryOverride = "MY_CUSTOM"),
+                pfcPrimary = "FOOD_AND_DRINK", overrideCategoryId = "MY_CUSTOM"),
         ))
         repo.setCategoryOverride("t1", null)
         val breakdown = repo.watchCategoryBreakdown(ranges("cc_1", "2026-04-01", "2026-04-30")).first()
@@ -297,7 +298,7 @@ class CategoryBreakdownTest {
         category: String? = null,
         pfcPrimary: String? = null,
         pfcDetailed: String? = null,
-        categoryOverride: String? = null,
+        overrideCategoryId: String? = null,
     ) = PlaidTransaction(
         transactionId = id,
         accountId = accountId,
@@ -308,6 +309,6 @@ class CategoryBreakdownTest {
         category = category,
         pfcPrimary = pfcPrimary,
         pfcDetailed = pfcDetailed,
-        categoryOverride = categoryOverride,
+        overrideCategoryId = overrideCategoryId,
     )
 }

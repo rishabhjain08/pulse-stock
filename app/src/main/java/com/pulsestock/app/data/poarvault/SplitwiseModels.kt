@@ -66,23 +66,26 @@ data class PlaidTransaction(
     val category: String? = null,
     val pfcPrimary: String? = null,    // e.g. "FOOD_AND_DRINK"
     val pfcDetailed: String? = null,   // e.g. "FOOD_AND_DRINK_RESTAURANTS"
-    val categoryOverride: String? = null,
+    val overrideCategoryId: String? = null,
     // Plaid's already-normalized merchant name ("Starbucks", "Amazon") — used for rule matching.
     // Null when Plaid doesn't provide one; rules are skipped for those transactions.
     val merchantName: String? = null,
     val cachedAt: Long = System.currentTimeMillis(),
 )
 
-/** A persisted rule: every transaction from [merchantName] gets [category] as its override. */
+/** A persisted rule: every transaction from [merchantName] gets [categoryId] as its override. */
 @Entity(tableName = "category_rules")
 data class CategoryRule(
     @PrimaryKey val merchantName: String,
-    val category: String,
+    val categoryId: String,
 )
 
 @Entity(tableName = "custom_categories")
 data class CustomCategory(
-    @PrimaryKey val name: String,
+    @PrimaryKey val id: String,
+    val name: String,
+    val emoji: String = "📦",
+    val isCore: Boolean = false,
 )
 
 /**
@@ -102,9 +105,12 @@ data class BalanceSnapshot(
     val currentBalance: Double?,    // from /balances
 )
 
-// Effective category priority: categoryOverride > category > pfcPrimary
+val PlaidTransaction.plaidFallbackCategory: String
+    get() = pfcDetailed ?: pfcPrimary ?: category ?: "OTHER"
+
+// Effective category priority: overrideCategoryId > pfcDetailed > pfcPrimary > category
 val PlaidTransaction.effectiveCategory: String
-    get() = categoryOverride ?: category ?: pfcPrimary ?: "OTHER"
+    get() = overrideCategoryId ?: pfcDetailed ?: pfcPrimary ?: category ?: "OTHER"
 
 data class CategorySpend(
     val effectiveCategory: String,
@@ -114,7 +120,7 @@ data class CategorySpend(
 
 data class TransactionOverride(
     val transactionId: String,
-    val categoryOverride: String?,
+    val overrideCategoryId: String?,
 )
 
 // ── Splitwise API response models (direct app → Splitwise calls) ──────────────

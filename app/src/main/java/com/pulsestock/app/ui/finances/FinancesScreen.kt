@@ -1,5 +1,6 @@
 package com.pulsestock.app.ui.finances
 
+import com.pulsestock.app.data.poarvault.CustomCategory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
@@ -201,6 +202,7 @@ fun FinancesScreen(
                 onExitBulkMode = vm::exitBulkMode,
                 onToggleBulkSelection = vm::toggleBulkSelection,
                 onOpenBulkPicker = vm::openBulkPicker,
+                customCategoriesMap = state.customCategoriesMap,
             )
         }
     }
@@ -218,10 +220,11 @@ fun FinancesScreen(
             CategoryPickerSheet(
                 transaction = overridingTx,
                 customCategories = state.customCategories,
+                customCategoriesMap = state.customCategoriesMap,
                 onPick = { category -> vm.applyOverride(overridingTx.transactionId, category) },
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
-                countTransactionsWithOverride = { name -> vm.countTransactionsWithOverride(name) },
+                countTransactionsWithOverride = vm::countTransactionsWithOverride,
                 onDismiss = vm::cancelOverride,
             )
         }
@@ -239,6 +242,7 @@ fun FinancesScreen(
             CategoryPickerSheet(
                 transaction = null,
                 customCategories = state.customCategories,
+                customCategoriesMap = state.customCategoriesMap,
                 onPick = { category -> vm.applyBulkCategory(category) },
                 onSaveCustomCategory = { name -> vm.saveCustomCategory(name) },
                 onDeleteCustomCategory = { name -> vm.deleteCustomCategory(name) },
@@ -253,7 +257,7 @@ fun FinancesScreen(
     // Merchant rule confirmation dialog
     val proposal = state.pendingMerchantRule
     if (proposal != null) {
-        val proposalMeta = CategoryMeta.get(proposal.category)
+        val proposalMeta = CategoryMeta.resolveMeta(proposal.categoryId, state.customCategoriesMap)
         AlertDialog(
             onDismissRequest = vm::dismissMerchantRule,
             title = { Text("Apply to all ${proposal.merchantName}?") },
@@ -377,6 +381,7 @@ fun FinancesScreen(
                             balanceSnapshotsByMonth = state.balanceSnapshotsByMonth,
                             allCreditAccounts = state.creditAccounts,
                             historySelectedAccountIds = state.historySelectedAccountIds,
+                            customCategoriesMap = state.customCategoriesMap,
                         )
                     }
                 }
@@ -764,6 +769,7 @@ private fun CategoryBreakdownCard(
     balanceSnapshotsByMonth: List<MonthlyBalanceSnapshot>,
     allCreditAccounts: List<AccountEntity>,
     historySelectedAccountIds: Set<String>?,
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var showHistorySheet by rememberSaveable { mutableStateOf(false) }
@@ -796,6 +802,7 @@ private fun CategoryBreakdownCard(
                 onToggleReimbursements = onToggleReimbursements,
                 reimbursableByMonth = reimbursableByMonth,
                 currencyFmt = currencyFmt,
+                customCategoriesMap = customCategoriesMap,
             )
         }
     }
@@ -917,6 +924,7 @@ private fun CategoryBreakdownCard(
                     currencyFmt = currencyFmt,
                     reimbursableAmount = if (includeReimbursements) currentMonthReimbursable else 0.0,
                     includeReimbursements = includeReimbursements,
+                    customCategoriesMap = customCategoriesMap,
                     modifier = Modifier
                         .align(Alignment.CenterHorizontally)
                         .padding(vertical = 8.dp),
@@ -933,7 +941,7 @@ private fun CategoryBreakdownCard(
             } else {
                 val totalAmount = breakdown.sumOf { it.totalAmount }
                 displayList.forEachIndexed { index, spend ->
-                    CategoryRow(spend, totalAmount, onCategoryTap, currencyFmt)
+                    CategoryRow(spend, totalAmount, onCategoryTap, currencyFmt, customCategoriesMap)
                     if (index < displayList.lastIndex) {
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -1010,8 +1018,9 @@ private fun SpendingDonutChart(
     breakdown: List<CategorySpend>,
     onSegmentTap: (String) -> Unit,
     currencyFmt: NumberFormat,
-    reimbursableAmount: Double = 0.0,
-    includeReimbursements: Boolean = false,
+    reimbursableAmount: Double,
+    includeReimbursements: Boolean,
+    customCategoriesMap: Map<String, CustomCategory>,
     modifier: Modifier = Modifier,
 ) {
     val total = breakdown.sumOf { it.totalAmount }.toFloat()
@@ -1124,8 +1133,9 @@ private fun CategoryRow(
     totalSpend: Double,
     onTap: (String) -> Unit,
     currencyFmt: NumberFormat,
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
-    val meta = CategoryMeta.get(spend.effectiveCategory)
+    val meta = CategoryMeta.resolveMeta(spend.effectiveCategory, customCategoriesMap)
     val percent = if (totalSpend > 0) (spend.totalAmount / totalSpend * 100).roundToInt() else 0
     
     // Minimum touch target: padding(vertical = 12.dp) + bodyMedium (≈20sp) ≥ 48dp total row height.
@@ -1202,8 +1212,9 @@ private fun CategoryDrillDownSheet(
     onExitBulkMode: () -> Unit = {},
     onToggleBulkSelection: (String) -> Unit = {},
     onOpenBulkPicker: () -> Unit = {},
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
-    val meta = CategoryMeta.get(category ?: "OTHER")
+    val meta = CategoryMeta.resolveMeta(category ?: "OTHER", customCategoriesMap)
     val rowBgSelected = MaterialTheme.colorScheme.secondaryContainer
     val rowBgDefault = MaterialTheme.colorScheme.surfaceContainerHigh
     // Outer Box so the sticky bottom bar can overlay the scroll content.
@@ -1312,7 +1323,7 @@ private fun CategoryDrillDownSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (isAllTransactionsMode) {
-                            val txMeta = CategoryMeta.get(tx.effectiveCategory)
+                            val txMeta = CategoryMeta.resolveMeta(tx.effectiveCategory, customCategoriesMap)
                             Spacer(Modifier.height(3.dp))
                             Surface(
                                 shape = MaterialTheme.shapes.extraSmall,
@@ -1326,7 +1337,7 @@ private fun CategoryDrillDownSheet(
                                 )
                             }
                         }
-                        if (tx.categoryOverride != null) {
+                        if (tx.overrideCategoryId != null) {
                             Text(
                                 text = "Overridden",
                                 style = MaterialTheme.typography.labelSmall,
@@ -1409,7 +1420,8 @@ private fun CategoryDrillDownSheet(
 @Composable
 private fun CategoryPickerSheet(
     transaction: PlaidTransaction?,
-    customCategories: List<String>,
+    customCategories: List<CustomCategory>,
+    customCategoriesMap: Map<String, CustomCategory>,
     onPick: (String) -> Unit,
     onSaveCustomCategory: (String) -> Unit,
     onDeleteCustomCategory: (String) -> Unit,
@@ -1421,7 +1433,7 @@ private fun CategoryPickerSheet(
 ) {
     var customInput by rememberSaveable { mutableStateOf("") }
     var showChangeHint by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    var pendingDelete by remember { mutableStateOf<Pair<CustomCategory, Int>?>(null) }
 
     LaunchedEffect(showChangeHint) {
         if (showChangeHint) {
@@ -1434,25 +1446,26 @@ private fun CategoryPickerSheet(
     val focusManager = LocalFocusManager.current
     val haptic = LocalHapticFeedback.current
 
-    val quickPickCodes = remember { CategoryMeta.quickPicks.map { it.first }.toSet() }
     // In bulk mode there is no single pre-selected category — treat as unset.
     val effectiveCat = if (isBulkMode) null else (transaction?.effectiveCategory ?: "OTHER")
-    val hasOverride = !isBulkMode && transaction?.categoryOverride != null
+    val resolvedMeta = effectiveCat?.let { CategoryMeta.resolveMeta(it, customCategoriesMap) }
 
-    // Selected floats to top; rest sorted alphabetically by display name
-    val trulyCustomCategories = customCategories.filter { it !in quickPickCodes }
-        .sortedWith(compareByDescending<String> { it == effectiveCat }
-            .thenBy { CategoryMeta.get(it).displayName })
+    val coreCategories = customCategories.filter { it.isCore }
+        .sortedWith(compareByDescending<CustomCategory> { resolvedMeta?.displayName == it.name }
+            .thenBy { it.name })
+
+    val userCategories = customCategories.filter { !it.isCore }
+        .sortedWith(compareByDescending<CustomCategory> { resolvedMeta?.displayName == it.name }
+            .thenBy { it.name })
 
     // Effective category not covered by either list — surface it at top of Categories
-    val effectiveCatInQuickPicks = effectiveCat != null && effectiveCat in quickPickCodes
-    val effectiveCatInCustom = effectiveCat != null && effectiveCat in trulyCustomCategories
+    val isOrphan = effectiveCat != null && 
+        customCategories.none { it.name == resolvedMeta?.displayName }
 
-    pendingDelete?.let { (catName, count) ->
-        val meta = CategoryMeta.get(catName)
+    pendingDelete?.let { (cat, count) ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove \"${meta.displayName}\"?") },
+            title = { Text("Remove \"${cat.name}\"?") },
             text = {
                 Text(
                     "$count transaction${if (count == 1) "" else "s"} using this category will " +
@@ -1461,7 +1474,7 @@ private fun CategoryPickerSheet(
             },
             confirmButton = {
                 Button(
-                    onClick = { onDeleteCustomCategory(catName); pendingDelete = null },
+                    onClick = { onDeleteCustomCategory(cat.id); pendingDelete = null },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 ) { Text("Remove") }
             },
@@ -1472,8 +1485,6 @@ private fun CategoryPickerSheet(
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // Banner is anchored above the scroll content so it's always visible regardless of
-        // scroll position — the selected item floats to top where the user's thumb already is.
         AnimatedVisibility(
             visible = showChangeHint,
             enter = expandVertically() + fadeIn(),
@@ -1541,30 +1552,30 @@ private fun CategoryPickerSheet(
         Spacer(Modifier.height(8.dp))
 
         // "Your categories" — user-created names, with trailing delete icon
-        if (trulyCustomCategories.isNotEmpty()) {
+        if (userCategories.isNotEmpty()) {
             Text(
                 text = "Your categories",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
-            trulyCustomCategories.forEach { cat ->
-                val meta = CategoryMeta.get(cat)
+            userCategories.forEach { cat ->
+                val selected = !isBulkMode && resolvedMeta?.displayName == cat.name
                 CategoryPickerRow(
-                    emoji = meta.emoji,
-                    label = meta.displayName,
-                    selected = !isBulkMode && effectiveCat == cat,
+                    emoji = cat.emoji,
+                    label = cat.name,
+                    selected = selected,
                     onPick = {
-                        if (!isBulkMode && effectiveCat == cat) {
+                        if (selected) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             showChangeHint = true
-                        } else onPick(cat)
+                        } else onPick(cat.id)
                     },
                     onDelete = {
                         scope.launch {
-                            val count = countTransactionsWithOverride(cat)
+                            val count = countTransactionsWithOverride(cat.id)
                             if (count > 0) pendingDelete = cat to count
-                            else onDeleteCustomCategory(cat)
+                            else onDeleteCustomCategory(cat.id)
                         }
                     },
                 )
@@ -1575,30 +1586,17 @@ private fun CategoryPickerSheet(
         }
 
         // "Categories" — selected floats to top, rest sorted alphabetically.
-        // Orphan: effective category not in quick picks or custom list — shown first.
-        val sortedQuickPicks = remember(effectiveCat) {
-            CategoryMeta.quickPicks.sortedWith(
-                compareByDescending<Pair<String, CategoryMeta.Meta>> { it.first == effectiveCat }
-                    .thenBy { it.second.displayName }
-            )
-        }
         Text(
             text = "Categories",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        // Suppress orphan when its display name already appears in quick picks — avoids
-        // showing two identically-named rows (e.g. both Gym codes map to "Gym").
-        val quickPickDisplayNames = remember { CategoryMeta.quickPicks.map { it.second.displayName }.toSet() }
-        val orphanDisplayName = effectiveCat?.let { CategoryMeta.get(it).displayName }
-        val showOrphan = effectiveCat != null && !effectiveCatInQuickPicks && !effectiveCatInCustom &&
-            orphanDisplayName !in quickPickDisplayNames
-        if (showOrphan) {
-            val orphanMeta = CategoryMeta.get(effectiveCat)
+        
+        if (isOrphan && resolvedMeta != null) {
             CategoryPickerRow(
-                emoji = orphanMeta.emoji,
-                label = orphanMeta.displayName,
+                emoji = resolvedMeta.emoji,
+                label = resolvedMeta.displayName,
                 selected = true,
                 onPick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1606,22 +1604,18 @@ private fun CategoryPickerSheet(
                 },
             )
         }
-        sortedQuickPicks.forEach { (code, meta) ->
-            // Show as selected if effectiveCat is this code OR a sibling code with same displayName
-            // (e.g. PERSONAL_CARE_GYMS → shows ENTERTAINMENT_GYMS quickPick as selected)
-            val siblingSelected = effectiveCat != null && !effectiveCatInQuickPicks && !effectiveCatInCustom &&
-                CategoryMeta.get(effectiveCat).displayName == meta.displayName
+        
+        coreCategories.forEach { cat ->
+            val selected = !isBulkMode && resolvedMeta?.displayName == cat.name
             CategoryPickerRow(
-                emoji = meta.emoji,
-                label = meta.displayName,
-                selected = effectiveCat == code || siblingSelected,
+                emoji = cat.emoji,
+                label = cat.name,
+                selected = selected,
                 onPick = {
-                    val isSameDisplay = effectiveCat != null &&
-                        CategoryMeta.get(effectiveCat).displayName == meta.displayName
-                    if (effectiveCat == code || (isSameDisplay && !effectiveCatInQuickPicks)) {
+                    if (selected) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         showChangeHint = true
-                    } else onPick(code)
+                    } else onPick(cat.id)
                 },
             )
         }
@@ -1790,6 +1784,7 @@ private fun buildBarSegments(
     miscColor: Color,
     allCategories: List<CategoryAmount>,
     palette: List<Color>,
+    customCategoriesMap: Map<String, CustomCategory>,
 ): List<BarSegment> {
     // Merchant filter active — group by merchant name
     if (selectedMerchants != null && monthMerchantHistory != null) {
@@ -1816,7 +1811,7 @@ private fun buildBarSegments(
         val color = colorMap[cat.effectiveCategory]
         if (color != null) {
             segments.add(BarSegment(
-                label = CategoryMeta.get(cat.effectiveCategory).displayName,
+                label = CategoryMeta.resolveMeta(cat.effectiveCategory, customCategoriesMap).displayName,
                 amount = cat.totalAmount,
                 color = color,
             ))
@@ -1853,6 +1848,7 @@ private fun SpendingHistorySheet(
     onToggleReimbursements: () -> Unit,
     reimbursableByMonth: Map<YearMonth, Double>,
     currencyFmt: NumberFormat,
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
     var filterDialogOpen by rememberSaveable { mutableStateOf(false) }
     var tooltipBarIndex by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -1886,6 +1882,7 @@ private fun SpendingHistorySheet(
             historySelectedAccountIds = historySelectedAccountIds,
             onSetAccountFilter = onSetHistoryAccountFilter,
             onDismiss = { filterDialogOpen = false },
+            customCategoriesMap = customCategoriesMap,
         )
     }
 
@@ -1987,6 +1984,7 @@ private fun SpendingHistorySheet(
                 historySelectedMerchants = historySelectedMerchants,
                 colorMap = colorMap,
                 palette = palette,
+                customCategoriesMap = customCategoriesMap,
                 miscColor = miscColor,
                 currencyFmt = currencyFmt,
                 tooltipBarIndex = tooltipBarIndex,
@@ -2003,6 +2001,7 @@ private fun SpendingHistorySheet(
                 historySelectedCategories = historySelectedCategories,
                 historySelectedMerchants = historySelectedMerchants,
                 topMerchantsForHistory = topMerchantsForHistory,
+                customCategoriesMap = customCategoriesMap,
             )
         } else {
             Box(
@@ -2036,6 +2035,7 @@ private fun HistoryStackedBarChart(
     onTooltipChange: (Int?) -> Unit,
     includeReimbursements: Boolean = false,
     reimbursableByMonth: Map<YearMonth, Double> = emptyMap(),
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
     val monthSlots = remember { last12MonthSlots() }
 
@@ -2066,7 +2066,7 @@ private fun HistoryStackedBarChart(
             val merchantData = merchantDataByMonth[slot]
             val segs = buildBarSegments(
                 monthData, merchantData, historySelectedCategories, historySelectedMerchants,
-                colorMap, miscColor, allHistoryCategories, palette,
+                colorMap, miscColor, allHistoryCategories, palette, customCategoriesMap,
             )
             segs.sumOf { it.amount }
         } ?: 1.0
@@ -2206,7 +2206,7 @@ private fun HistoryStackedBarChart(
                         val segments = buildBarSegments(
                             monthData, merchantData,
                             historySelectedCategories, historySelectedMerchants,
-                            colorMap, miscColor, allHistoryCategories, palette,
+                            colorMap, miscColor, allHistoryCategories, palette, customCategoriesMap,
                         )
                         val totalHeight = segments.sumOf { it.amount }
                         var currentY = chartH
@@ -2268,7 +2268,7 @@ private fun HistoryStackedBarChart(
                         val segments = buildBarSegments(
                             monthData, merchantData,
                             historySelectedCategories, historySelectedMerchants,
-                            colorMap, miscColor, allHistoryCategories, palette,
+                            colorMap, miscColor, allHistoryCategories, palette, customCategoriesMap,
                         )
                         val tooltipTotal = segments.sumOf { it.amount }
                         val tooltipMaxWidthDp = 200.dp
@@ -2399,6 +2399,7 @@ private fun HistoryChartLegend(
     historySelectedCategories: Set<String>?,
     historySelectedMerchants: Set<String>?,
     topMerchantsForHistory: List<MerchantSpendSummary>,
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
     // In merchant-filter mode the legend shows merchants; otherwise categories.
     // Build a list of (label, color) pairs in chart draw order.
@@ -2419,7 +2420,7 @@ private fun HistoryChartLegend(
             }
             .take(5)
             .map { cat ->
-                CategoryMeta.get(cat.effectiveCategory).displayName to
+                CategoryMeta.resolveMeta(cat.effectiveCategory, customCategoriesMap).displayName to
                     colorMap[cat.effectiveCategory]!!
             }
         val miscEntry = if (colorMap.containsKey("Misc")) listOf("Misc" to colorMap["Misc"]!!) else emptyList()
@@ -2530,6 +2531,7 @@ private fun HistoryFilterDialog(
     historySelectedAccountIds: Set<String>?,
     onSetAccountFilter: (Set<String>?) -> Unit,
     onDismiss: () -> Unit,
+    customCategoriesMap: Map<String, CustomCategory>,
 ) {
     // Tab order: 0 = Cards, 1 = Categories, 2 = Merchants
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -2622,8 +2624,8 @@ private fun HistoryFilterDialog(
                     items = allCategories.map { cat ->
                         FilterItem(
                             key = cat.effectiveCategory,
-                            label = CategoryMeta.get(cat.effectiveCategory).displayName,
-                            prefix = CategoryMeta.get(cat.effectiveCategory).emoji,
+                            label = CategoryMeta.resolveMeta(cat.effectiveCategory, customCategoriesMap).displayName,
+                            prefix = CategoryMeta.resolveMeta(cat.effectiveCategory, customCategoriesMap).emoji,
                             totalAmount = cat.totalAmount,
                         )
                     },
